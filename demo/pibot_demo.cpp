@@ -20,7 +20,7 @@ Copyright:
 	GNU General Public License for more details.
 ******************************************************************/
 
-#include "pibot.h"
+#include "../driver_cpp/pibot.h"
 #include <stdio.h>
 #include <iostream>
 #include <ctime>

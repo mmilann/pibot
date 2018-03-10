@@ -1,5 +1,5 @@
-SRC=pibot_demo.cpp pibot.cpp
-HEADERS=pibot.h
+SRC=pibot_demo.cpp ../driver_cpp/pibot.cpp
+HEADERS=../driver_cpp/pibot.h
 LDFLAGS= -lwiringPi
 CXXFLAGS= -std=c++11
 

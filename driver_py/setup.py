@@ -9,7 +9,7 @@ setup(name="PiBot",
 	author='Milan Neskovic',
     author_email='milan@pi-supply.com',
     ext_modules=[
-        Extension("pibot", ["python_pibot.cpp", "pibot.cpp"],
+        Extension("pibot", ["python_pibot.cpp", "../driver_cpp/pibot.cpp"],
         libraries = ["boost_python", "wiringPi"],
 		extra_compile_args=['-std=c++11'])
     ])

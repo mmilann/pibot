@@ -22,7 +22,7 @@ Copyright:
 ******************************************************************/
 
 #include <boost/python.hpp>
-#include "pibot.h"
+#include "../driver_cpp/pibot.h"
 
 using namespace boost::python;
 
