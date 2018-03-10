@@ -1,5 +1,5 @@
 /*****************************************************************
-File: demo.cpp
+File: bottest.cpp
 Version: 1.0
 
 Author: Milan Neskovic 2016-2018, milan@pi-supply.com
@@ -20,7 +20,7 @@ Copyright:
 	GNU General Public License for more details.
 ******************************************************************/
 
-#include "../driver_cpp/pibot.h"
+#include "pibot.h"
 #include <stdio.h>
 #include <iostream>
 #include <ctime>
@@ -174,11 +174,13 @@ int main(void) {
 	usleep(10000);
 	//PiBot::PowerControl(1);
 	
+	pinMode(17,  OUTPUT); // zero encoder current drive on/off
+	digitalWrite(17, HIGH);
 	
-	pibot.SetSpeed(1, 1, 255);
-	pibot.SetSpeed(2, 0, 255);
+	pibot.SetSpeed(1, 0, 200);
+	pibot.SetSpeed(2, 1, 200);
 	pibot.SetSpeed(3, 0, 255);
-	pibot.SetSpeed(4, 0, 5);
+	pibot.SetSpeed(4, 0, 255);
 	
 	//pibot.SetCurrentLimit(10);
 
@@ -202,8 +204,8 @@ int main(void) {
 	pibot.SetPWM(12, 2048); 
 	pibot.SetPWM(13, 2048); 
 	pibot.SetPWM(14, 2048); 
-	pibot.SetPWM(15, 2048); 
-	pibot.SetPWM(16, 37); 
+	//pibot.SetPWM(15, 2048); 
+	//pibot.SetPWM(16, 400); 
 	
 	gettimeofday(&cur_time1, 0);
 	// stepper 
@@ -286,13 +288,13 @@ int main(void) {
 		//wiringPiI2CWriteReg8(_pca9685Fd, 0x3b, ++i&0x0F);
 		//pibot.SetPWM(16, lightLevel-1);
 
-		cout << "Light Level: "<<lightLevel<<endl;
+		//cout << "Light Level: "<<lightLevel<<endl;
 		
-		cout << "GPIO5: "<<digitalRead(5)<<endl;
-		cout << "GPIO16: "<<digitalRead(16)<<endl;
+		//cout << "GPIO5: "<<digitalRead(5)<<endl;
+		//cout << "GPIO16: "<<digitalRead(16)<<endl;
 		//cout << "GPIO25: "<<digitalRead(25)<<endl;
 	
-		cout << "magX: " << magacc.GetMagX()<< " magY: " << magacc.GetMagY()<< " magZ: " << magacc.GetMagZ() << endl;
+		//cout << "magX: " << magacc.GetMagX()<< " magY: " << magacc.GetMagY()<< " magZ: " << magacc.GetMagZ() << endl;
 		cout << "accX: " << magacc.GetAccX()<< " accY: " << magacc.GetAccY()<< " accZ: " << magacc.GetAccZ() << endl;
 		bar.GetTemp();
 		//cout << "range [cm]: " << pibot.GetRangeCm(26, 25, 340) << endl;
@@ -301,7 +303,7 @@ int main(void) {
 		//pibot.encoders[0]._UpdateIsrCb(pibot.encoders[0]);
 		float speedW1 =  1000000000.0 / (20 * pibot.encoders[1]->pulsPeriodNs); // float(pibot.encoders[1]->counter - prevCnt[1]) / 2; //
 		float speedW2 = 1000000000.0 / (20 * pibot.encoders[0]->pulsPeriodNs); // float(pibot.encoders[0]->counter - prevCnt[0]) / 2; //
-		/*if ((i>>8)&8)*/ //cout << "encoder: "<< (int)motorEmf1 <<", "<< (int)motorEmf2 << ", speedW1 "<< speedW1<< ", speedW2 "<< speedW2 << endl;
+		/*if ((i>>8)&8)*/ cout << "encoder: "<< (int)motorEmf1 <<", "<< (int)motorEmf2 << ", speedW1 "<< speedW1<< ", speedW2 "<< speedW2 << endl;
 		if (speedW1 > 2 ) {
 			if (motorEmf1 > 0) motorEmf1 --;
 		} else {
@@ -312,8 +314,8 @@ int main(void) {
 		} else {
 			if (motorEmf2 < 255) motorEmf2 ++;
 		}
-		//pibot.SetSpeed(1, 0, motorEmf1);
-		//pibot.SetSpeed(2, 0, motorEmf2);
+		pibot.SetSpeed(1, 0, motorEmf1);
+		pibot.SetSpeed(2, 0, motorEmf2);
 		
 		prevCnt[0] = pibot.encoders[0]->counter;
 		prevCnt[1] = pibot.encoders[1]->counter;
