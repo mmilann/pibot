@@ -36,27 +36,64 @@ Copyright:
 #define BAR_ADDR 0x76
 #define ADC_ADDR 0x49
 
-#define MOTOR_DRIVER_OUTPUT_M1	1
-#define MOTOR_DRIVER_OUTPUT_M2	2
-#define MOTOR_DRIVER_OUTPUT_M3	3
-#define MOTOR_DRIVER_OUTPUT_M4	4
+#define PIBOT_M1	0
+#define PIBOT_M2	1
+#define PIBOT_M3	2
+#define PIBOT_M4	3
 
 #define MAX_ENCODERS	8
 
+enum DriverOutput { M1=0, M2, M3, M4 };
+
+void ObjWiringPiISR(int val, int mask, std::function<void()> callback);
+
+namespace pibot {
+
 typedef enum deacayModes {SLOW, FAST} deacayMode_t;
+
+class PCA9634
+{
+public:
+	enum outputDriveT { OPEN_DRAIN=0, TOTEM_POLE=4 };
+	enum outputStateT { OFF=0, ON=1, PWM, PWM_GROUP };
+	PCA9634(int address = PCA9634_ADDR);
+	~PCA9634();
+	int Configure(bool inverted, outputDriveT outDrv, uint8_t outne);
+	int SetState(uint8_t output, outputStateT state);
+	outputStateT GetState(uint8_t output);
+	int SetGroupStates(uint8_t groupId, outputStateT s0, outputStateT s1, outputStateT s2, outputStateT s3);
+	int SetPulse(uint8_t output, uint8_t width);
+private:
+	int _fd;
+	uint8_t _states[2];
+	uint8_t _pw[8];
+};
+
+class PCA9685
+{
+public:
+	PCA9685(int address = PCA9685_ADDR);
+	~PCA9685();
+	int SetPulse(uint8_t channel, uint16_t timeOn, uint16_t timeOff);
+private:
+	int _fd;
+};
 
 class MotorDriver
 {
 public:
-	MotorDriver(bool paralellMode = true);
+	MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode = false);
 	~MotorDriver();
-	int DriveOutput(uint8_t output, int16_t level);
+	int SetOutputLevel(uint8_t output, int16_t level);
 	deacayMode_t decayMode;
 private:
-	int pca9634Fd;
-	unsigned char _motorStateRegs[2];
-	unsigned char _motorSpeedReg1[4];
-	unsigned char _motorSpeedReg2[4];
+	int _id;
+	//int pca9634Fd;
+	PCA9634 &_pwmDriver;
+	PCA9634::outputStateT _inputStates[4];
+	/*unsigned char _motorStateRegs[2];
+	unsigned char _motorSpeedReg1[2];
+	unsigned char _motorSpeedReg2[2];*/
 };
 
 class StepperDriver 
@@ -74,16 +111,8 @@ private:
 	uint32_t _prevPeriod;
 	int32_t _nextTime;
 };
-
-typedef void (*PinCallbackT)();
-void _PinCallback0();
-void _PinCallback1();
-void _PinCallback2();
-void _PinCallback3();
-
-void ObjWiringPiISR(int val, int mask, std::function<void()> callback);
 	
-class Encoder 
+class Encoder
 {
 public:
 	friend class PiBot;
@@ -92,50 +121,11 @@ public:
     const int pin_b; 
 	int32_t counter;
 	int32_t pulsPeriodNs;
-	//static void _UpdateIsrCb(Encoder *encoder);
 private:
 	static void _UpdateCounterIsrCb(Encoder *encoder);
-	//void _EncWiringPiISR(int val, int mask);
 	static void _UpdateIsrCb(Encoder *encoder);
-	//void Update();
 	volatile int lastEncoded;
 	std::chrono::time_point<std::chrono::high_resolution_clock> _tick;
-};
-void objCallback();
-class PiBot 
-{
-public:
-	PiBot(bool paralellMode = false);
-	~PiBot();
-	int SetSpeed(unsigned char motor, unsigned char dir, unsigned char speed);
-	int SetWheelSpeed(unsigned char wheel, int16_t rpm);
-	int SetCurrentLimit(unsigned char value);
-	static void PowerControl(uint8_t onOff);
-	//int32_t DriveSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
-	//int32_t DriveHalfSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
-	int SetPWM(uint8_t channel, uint16_t level);
-	float GetRangeCm(int triggerPin, int echoPin, float velocity = 340.0);
-	void SonarTrigger(int triggerPin);
-	static void UpdateEncoders();
-	//deacayMode_t decayMode;
-	StepperDriver *stepper[4][4];
-	//Encoder* encoders;
-	 std::vector<Encoder*> encoders;
-	//void CreateEncoders();
-	float dist1, dist2, dist3;
-private:
-	static void _EchoIsrCb1(PiBot *bot);
-	static void _EchoIsrCb2(PiBot *bot);
-	static void _EchoIsrCb3(PiBot *bot);
-	std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime1, _triggerTime2, _triggerTime3;
-	int pca9634Fd;
-	int _pca9685Fd;
-	MotorDriver _driver;
-	/*int32_t _step[4][4];
-	struct timeval _stepTime[4][4];
-	struct timeval refTime[4][4];
-	uint32_t prevPeriod[4][4];
-	int32_t _nextT[4][4];*/
 };
 
 class MagAcc
@@ -188,4 +178,43 @@ private:
 	int _i2cFd;
 };
 
+class PiBot 
+{
+public:
+	PiBot(bool paralellMode = false);
+	~PiBot();
+	int SetMotorDrive(DriverOutput output, int16_t level);
+	//int SetWheelSpeed(unsigned char wheel, int16_t rpm);
+	int SetCurrentLimit(uint8_t driverId, float maxCurrent);
+	static void PowerControl(uint8_t onOff);
+	//int32_t DriveSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
+	//int32_t DriveHalfSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
+	int SetPWM(uint8_t channel, float dutyCircle);
+	int SetLedDrive(uint8_t channel, float level);
+	float GetRangeCm(int triggerPin, int echoPin, float velocity = 340.0);
+	void SonarTrigger(int triggerPin);
+	StepperDriver *stepper[4][4];
+	std::vector<Encoder*> encoders;
+	ADConverter adc;
+	MagAcc magacc;
+	Barometer bar;
+	float dist1, dist2, dist3;
+private:
+	static void _EchoIsrCb1(PiBot *bot);
+	static void _EchoIsrCb2(PiBot *bot);
+	static void _EchoIsrCb3(PiBot *bot);
+	std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime1, _triggerTime2, _triggerTime3;
+	PCA9634 _pca9634;
+	PCA9685 _pca9685;
+	//int pca9634Fd;
+	//int _pca9685Fd;
+	MotorDriver *_mDriver[2];
+	/*int32_t _step[4][4];
+	struct timeval _stepTime[4][4];
+	struct timeval refTime[4][4];
+	uint32_t prevPeriod[4][4];
+	int32_t _nextT[4][4];*/
+};
+
+}
 #endif // PIBOT_H

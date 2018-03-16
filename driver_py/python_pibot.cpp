@@ -25,11 +25,23 @@ Copyright:
 #include "../driver_cpp/pibot.h"
 
 using namespace boost::python;
+using namespace pibot;
 
 BOOST_PYTHON_MODULE(pibot)
 {
     class_<PiBot>("PiBot")
-        .def("SetSpeed", &PiBot::SetSpeed)
+        .def("SetMotorDrive", &PiBot::SetMotorDrive)
         .def("SetPWM", &PiBot::SetPWM)
+		.add_property("adc", &PiBot::adc)
+    ;
+    class_<ADConverter>("ADConverter")
+        .def("Convert", &ADConverter::Convert)
+    ;
+	enum_<DriverOutput>("DriverOutput")
+		.value("M1", M1)
+		.value("M2", M2)
+		.value("M3", M3)
+		.export_values()
+		.value("M4", M4)
     ;
 }

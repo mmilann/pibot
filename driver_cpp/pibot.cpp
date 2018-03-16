@@ -35,35 +35,128 @@ Copyright:
 #include <math.h>
 #include <sys/time.h> 
 
-MotorDriver::MotorDriver(bool paralellMode){
-	wiringPiSetupGpio(); // Initialize wiringPi
+using namespace pibot;
+
+#define MOTOR_DRIVER_OUTPUT_A	0
+#define MOTOR_DRIVER_OUTPUT_B	1
+
+typedef void (*_PinCallbackT)();
+
+PCA9634::PCA9634(int address) {
+	// Initialize
+	_fd = wiringPiI2CSetup(address);
+	wiringPiI2CWriteReg8(_fd, 0x00, 0x00);
+	wiringPiI2CWriteReg8(_fd, 0x01, 0x02);
+	_states[0] = wiringPiI2CReadReg8(_fd, 0x0c);
+	_states[1] = wiringPiI2CReadReg8(_fd, 0x0d);
+}
+
+PCA9634::~PCA9634() {
+	wiringPiI2CWriteReg8(_fd, 0x00, 0x10); // Low power mode
+	close(_fd);
+}
+
+int PCA9634::Configure(bool inverted, outputDriveT outDrv, uint8_t outne) {
+	uint8_t cfg = (inverted?0x04:0x00) | (uint8_t)outDrv | outne;
+	wiringPiI2CWriteReg8(_fd, 0x01, cfg);
+}
+
+int PCA9634::SetState(uint8_t output, outputStateT state) {
+	uint8_t groupId = (output&0x04)>>2;
+	uint8_t stateRegShift = (output&0x03) * 2;
+	uint8_t newStates = _states[groupId];
+	newStates &= ~(0x03 << stateRegShift);
+	newStates |= (uint8_t)state << stateRegShift;
+	if (newStates != _states[groupId]) {
+		wiringPiI2CWriteReg8(_fd, 0x0c+groupId, newStates);
+		_states[groupId] = newStates;
+	}
+}
+
+PCA9634::outputStateT PCA9634::GetState(uint8_t output){
+	uint8_t s = output&0x04 ? (uint8_t)_states[1] >> ((output&0x03) * 2) 
+		: (uint8_t)_states[0] >> ((output&0x03) * 2);
+	return (PCA9634::outputStateT)s;
+}
+
+int PCA9634::SetGroupStates(uint8_t groupId, outputStateT s0, outputStateT s1, outputStateT s2, outputStateT s3) {
+	uint8_t newStates  = (uint8_t)s0 | ((uint8_t)s1 << 2) | ((uint8_t)s2 << 4) | ((uint8_t)s3 << 6);
+	if (newStates != _states[groupId]) {
+		wiringPiI2CWriteReg8(_fd, 0x0c+(groupId&1), newStates );
+		_states[groupId] = newStates;
+	}
+}
+
+int PCA9634::SetPulse(uint8_t output, uint8_t width) {
+	if (_pw[output] != width) {
+		wiringPiI2CWriteReg8(_fd, 0x02 + output, width );
+		_pw[output] = width;
+	}
+}
+
+PCA9685::PCA9685(int address) {
+	// Initialize PCA9685 I2C
+	_fd = wiringPiI2CSetup(address);
+	wiringPiI2CWriteReg8(_fd, 0x00, 0x10); // set sleep mode to change prescaler
+	usleep(5000);
+	//wiringPiI2CWriteReg8(_pca9685Fd, 0xFE, 0x03); // set prescale to 1526 Hz
+	wiringPiI2CWriteReg8(_fd, 0xFE, 0x79); // set prescale to 50 Hz, 20mS required by servos
+	wiringPiI2CWriteReg8(_fd, 0x00, 0x00);
+	wiringPiI2CWriteReg8(_fd, 0x01, 0x06); // totem-pole, high impedance when disabled
+}
+
+PCA9685::~PCA9685() {
+	wiringPiI2CWriteReg8(_fd, 0x00, 0x10); // set sleep mode
+	close(_fd);
+}
+
+int PCA9685::SetPulse(uint8_t channel, uint16_t timeOn, uint16_t timeOff) {
+	uint8_t reg = 0x06 + (channel&0x0F) * 4;
+	wiringPiI2CWriteReg8(_fd, reg, timeOn); //
+	wiringPiI2CWriteReg8(_fd, reg + 1, timeOn >> 8);
+	wiringPiI2CWriteReg8(_fd, reg + 2, timeOff); //
+	wiringPiI2CWriteReg8(_fd, reg + 3, timeOff >> 8);
+	return 0;
+}
+
+MotorDriver::MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode):
+	_pwmDriver(pwmDriver)
+{
+	_id = id;
 	pinMode(22,  OUTPUT); // deactivate enable
 	digitalWrite(22, LOW);
 	// Initialize PCA9634
-	pca9634Fd = wiringPiI2CSetup(PCA9634_ADDR);
+	/*pca9634Fd = wiringPiI2CSetup(PCA9634_ADDR);
 	wiringPiI2CWriteReg8(pca9634Fd, 0x00, 0x00);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x01, paralellMode?0x12:0x14);
+	wiringPiI2CWriteReg8(pca9634Fd, 0x01, paralellMode?0x16:0x14);
 	wiringPiI2CWriteReg8(pca9634Fd, 0x0c, 0x55);
 	wiringPiI2CWriteReg8(pca9634Fd, 0x0d, 0x55);
 	
-	_motorStateRegs[0] = _motorStateRegs[1] = 0;
-	
+	_motorStateRegs[0] = _motorStateRegs[1] = 0;*/
+	if (paralellMode) {
+		_pwmDriver.Configure(true, PCA9634::OPEN_DRAIN, 0x02);
+		_pwmDriver.SetGroupStates(id, PCA9634::ON, PCA9634::ON, PCA9634::ON, PCA9634::ON); // high impedance if open drain inverted
+	} else {
+		_pwmDriver.Configure(true, PCA9634::TOTEM_POLE, 0x00);
+		_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // low state
+	}
+
 	usleep(5000);
 	digitalWrite(22, HIGH); // enable power
 	usleep(2000);
 	pinMode(22,  INPUT);//
 	pullUpDnControl(22, PUD_UP);
 	usleep(5000);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x01, 0x14);
-	std::cout<<"MotorDriver"<<std::endl;
+	//wiringPiI2CWriteReg8(pca9634Fd, 0x01, 0x14);
+	_pwmDriver.Configure(true, PCA9634::TOTEM_POLE, 0x00);
+	_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // low state
 }
 
 MotorDriver::~MotorDriver(){
-	close(pca9634Fd);
 }
 
-int MotorDriver::DriveOutput(uint8_t output, int16_t emfLevel) {
-	uint8_t ind = (output - 1) & 0x03;
+int MotorDriver::SetOutputLevel(uint8_t output, int16_t level) {
+	/*uint8_t ind = (output + _id*2) & 0x03;
 	int pwmReg1 = (ind << 1) + 0x02;
 	int pwmReg2 = (ind << 1) + 0x03;
 	int stateReg = (ind&0x02)?0x0d:0x0c;
@@ -73,8 +166,8 @@ int MotorDriver::DriveOutput(uint8_t output, int16_t emfLevel) {
 	uint8_t &motorStateReg = _motorStateRegs[(ind&0x02)>>1];
 	uint8_t prevState = motorStateReg;
 	motorStateReg &= ~((0x03 << stateRegShift1) | (0x03 << stateRegShift2));
-	uint8_t emfReg = emfLevel > 0 ? emfLevel : -emfLevel;
-	if (emfLevel >= 0) { // forward
+	uint8_t emfReg = level > 0 ? level : -level;
+	if (level >= 0) { // forward
 		motorStateReg |= ((0x02 << stateRegShift1) | (0x00 << stateRegShift2)); // first drive line pwm, second high state
 		if (prevState != motorStateReg) wiringPiI2CWriteReg8(pca9634Fd, stateReg, motorStateReg );
 		//std::cout << std::hex <<"motorStateReg: " << (int)motorStateReg<<std::endl;
@@ -89,8 +182,21 @@ int MotorDriver::DriveOutput(uint8_t output, int16_t emfLevel) {
 			wiringPiI2CWriteReg8(pca9634Fd, pwmReg2, emfReg );
 			_motorSpeedReg2[ind] = emfReg;
 		}
+	}*/
+	uint8_t pw;
+	if (level >= 0) { // forward
+		// first drive line pwm, second high state
+		_inputStates[output*2] = PCA9634::PWM;
+		_inputStates[output*2+1] = PCA9634::OFF;
+		pw = level;
+	} else {
+		// first drive high state, second pwm
+		_inputStates[output*2] = PCA9634::OFF;
+		_inputStates[output*2+1] = PCA9634::PWM;
+		pw = -level;
 	}
-
+	_pwmDriver.SetGroupStates(_id, _inputStates[0], _inputStates[1], _inputStates[2], _inputStates[3]);
+	_pwmDriver.SetPulse(_id*4+output*2, level);
 	return 0;
 }
 
@@ -142,12 +248,12 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torq
 		}
 		
 		if (steps > 0) {
-			_driver.DriveOutput(_out1, _step&0x02 ? torque : - torque);
-			_driver.DriveOutput(_out2, (_step+1)&0x02 ? torque : - torque);
+			_driver.SetOutputLevel(_out1, _step&0x02 ? torque : - torque);
+			_driver.SetOutputLevel(_out2, (_step+1)&0x02 ? torque : - torque);
 			_step++;
 		} else {
-			_driver.DriveOutput(_out1, (_step-1)&0x02 ? torque : - torque);
-			_driver.DriveOutput(_out2, _step&0x02 ? torque : - torque);
+			_driver.SetOutputLevel(_out1, (_step-1)&0x02 ? torque : - torque);
+			_driver.SetOutputLevel(_out2, _step&0x02 ? torque : - torque);
 			_step--;
 		}
 	}
@@ -171,31 +277,28 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torq
 
 //std::vector<Encoder> encoders;
 
-void PiBot::UpdateEncoders()
+/*void PiBot::UpdateEncoders()
 {
     //for (uint8_t i = 0; i < encoders.size(); i++) encoders[i].Update();
-}
+}*/
 
-std::function<void()> _objCbFunc[4];
+std::function<void()> _objCbFunc[5];
 
 void _PinCallback0() { _objCbFunc[0](); }
 void _PinCallback1() { _objCbFunc[1](); }
 void _PinCallback2() { _objCbFunc[2](); }
 void _PinCallback3() { _objCbFunc[3](); }
+void _PinCallback4() { _objCbFunc[4](); }
 
-static PinCallbackT _pinCbs[4] = {_PinCallback0, _PinCallback1, _PinCallback2, _PinCallback3};
+static _PinCallbackT _pinCbs[5] = {_PinCallback0, _PinCallback1, _PinCallback2, _PinCallback3, _PinCallback4};
 static int _pinCbCount = 0;
 
 void ObjWiringPiISR(int val, int mask, std::function<void()> callback)
-//void Encoder::_EncWiringPiISR(int val, int mask)
 {
-  //_objCbFunc[n] = callback;
-  //wiringPiISR(val, mask, &objCallback);
   if (_pinCbCount > 3) return;
   _objCbFunc[_pinCbCount] = callback;
   wiringPiISR(val, mask, _pinCbs[_pinCbCount]);
   _pinCbCount ++;
-  std::cout<<"_pinCbCount "<<(int)_pinCbCount << ", " << val << std::endl;
 }
 
 Encoder::Encoder(int8_t pinA, int8_t pinB):
@@ -211,18 +314,11 @@ Encoder::Encoder(int8_t pinA, int8_t pinB):
 	if (pin_b >= 0) {
 		pinMode(pin_b, INPUT);
 		pullUpDnControl(pin_b, PUD_UP);
-		//wiringPiISR(pin_a,INT_EDGE_BOTH, PiBot::UpdateEncoders);
-		//objWiringPiISR(pin_a, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
-		//wiringPiISR(pin_b,INT_EDGE_BOTH, PiBot::UpdateEncoders);
-		//objWiringPiISR(pin_b, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
 		ObjWiringPiISR(pin_a, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
 		ObjWiringPiISR(pin_b, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
 	} else {
 		ObjWiringPiISR(pin_a, INT_EDGE_FALLING, std::bind(&Encoder::_UpdateCounterIsrCb, this));
-		//_EncWiringPiISR(pin_a, INT_EDGE_FALLING);
 	}
-	//std::cout<<"this "<<(int)this<<std::endl;
-	//objCallback();
 }
 
 void Encoder::_UpdateCounterIsrCb(Encoder *encoder) {
@@ -244,57 +340,18 @@ void Encoder::_UpdateIsrCb(Encoder *encoder) {
 	if(sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) encoder->counter--;
 
 	encoder->lastEncoded = encoded;
-	//if (MSB || LSB) std::cout<<"encoder triggered"<<MSB<<LSB<<std::endl;
-	//std::cout<<"encoder triggered "<<(int)encoder<<", "<<encoder->counter<<std::endl;
 }
-
-/*void PiBot::CreateEncoders() {
-	encoders.push_back(Encoder(12, 16));
-}*/
 
 PiBot::PiBot(bool paralellMode)
 {
-	//wiringPiSetupGpio(); // Initialize wiringPi
+	wiringPiSetupGpio(); // Initialize wiringPi
+	pinMode(22,  OUTPUT); // deactivate enable
+	digitalWrite(22, LOW);
 
-	/*pinMode(22,  OUTPUT); // deactivate enable
-	digitalWrite(22, LOW);*/
+	_mDriver[0] = new MotorDriver(0, _pca9634);
+	_mDriver[1] = new MotorDriver(1, _pca9634);
 	
-	// Initialize PCA9634
-	/*pca9634Fd = wiringPiI2CSetup(PCA9634_ADDR);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x00, 0x00);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x01, paralellMode?0x16:0x14);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x0c, 0xaa);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x0d, 0xaa);
-	
-	_motorStateRegs[0] = _motorStateRegs[1] = 0;*/
-	
-	// Initialize PCA9685
-	if ((_pca9685Fd = open("/dev/i2c-1", O_RDWR)) < 0) {
-		printf("Failed to open the bus.");
-		/* ERROR HANDLING; you can check errno to see what went wrong */
-		return;
-	}
-
-	if (ioctl(_pca9685Fd, I2C_SLAVE_FORCE, PCA9685_ADDR) < 0) {
-		printf("Failed to acquire bus access and/or talk to slave.\n");
-		/* ERROR HANDLING; you can check errno to see what went wrong */
-		return;
-	}
-	wiringPiI2CWriteReg8(_pca9685Fd, 0x00, 0x10); // set sleep mode to change prescaler
-	usleep(5000);
-	//wiringPiI2CWriteReg8(_pca9685Fd, 0xFE, 0x03); // set prescale to 1526 Hz
-	wiringPiI2CWriteReg8(_pca9685Fd, 0xFE, 0x79); // set prescale to 50 Hz, 20mS required by servos
-	wiringPiI2CWriteReg8(_pca9685Fd, 0x00, 0x00);
-	wiringPiI2CWriteReg8(_pca9685Fd, 0x01, 0x04);
-	wiringPiI2CWriteReg8(_pca9685Fd, 0x3f, 0); //  aref1 on time
-	
-	//wiringPiI2CWriteReg8(_pca9685Fd, 0x3b, 1); // LED
-	//wiringPiI2CWriteReg8(_pca9685Fd, 0x3d, 0);
-	
-	//wiringPiI2CWriteReg8(_pca9685Fd, 0x37, 2);
-	//wiringPiI2CWriteReg8(_pca9685Fd, 0x39, 5);
-	
-	stepper[2][3] = new StepperDriver(_driver, MOTOR_DRIVER_OUTPUT_M3, MOTOR_DRIVER_OUTPUT_M4);
+	stepper[2][3] = new StepperDriver(*(_mDriver[1]), 2, 3);
 	
 	encoders.push_back(new Encoder(5));
 	encoders.push_back(new Encoder(16));
@@ -310,18 +367,17 @@ PiBot::PiBot(bool paralellMode)
 	ObjWiringPiISR(4, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb1, this));
 	ObjWiringPiISR(27, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb2, this));
 	ObjWiringPiISR(25, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb3, this));
-	/*digitalWrite(22, HIGH);//pinMode(22,  INPUT); // enable power
-	usleep(2000);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x01, 0x14);*/
-	//objCallback();
+	
+	//digitalWrite(22, HIGH);//pinMode(22,  INPUT); // enable power
 }
 
 PiBot::~PiBot(){
 	pinMode(22,  OUTPUT); // deactivate enable
 	digitalWrite(22, LOW); // disable power
-	close(pca9634Fd);
-	close(_pca9685Fd);
-	std::cout<<std::endl<<"PiBot is off"<<std::endl;
+	delete _mDriver[0];
+	delete _mDriver[1];
+	//close(_pca9685Fd);
+	//std::cout<<std::endl<<"PiBot is off"<<std::endl;
 }
 
 void PiBot::PowerControl(uint8_t onOff) {
@@ -338,13 +394,17 @@ void PiBot::PowerControl(uint8_t onOff) {
 	}
 }
 
-int PiBot::SetPWM(uint8_t channel, uint16_t level) {
-	uint8_t reg = 0x06 + (channel-1) * 4;
+int PiBot::SetPWM(uint8_t channel, float dutyCircle) {
+	if (channel <= 12)
+		_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
+	else if (channel <= 12)
+		_pca9634.SetPulse(channel-13, dutyCircle*255.99);
+	/*uint8_t reg = 0x06 + (channel-1) * 4;
 	wiringPiI2CWriteReg8(_pca9685Fd, reg, 0); // LED
 	uint8_t v = level >> 8;
 	wiringPiI2CWriteReg8(_pca9685Fd, reg + 1, 0);
 	wiringPiI2CWriteReg8(_pca9685Fd, reg + 2, level); // LED
-	wiringPiI2CWriteReg8(_pca9685Fd, reg + 3, v);
+	wiringPiI2CWriteReg8(_pca9685Fd, reg + 3, v);*/
 	/*uint8_t data[5] = {0, 0, 0, 0};
 	data[0] = 0x06 + (channel-1) * 4;
 	write(_pca9685Fd, data, 1);
@@ -354,48 +414,19 @@ int PiBot::SetPWM(uint8_t channel, uint16_t level) {
 	return 0;
 }
 
-int PiBot::SetSpeed(unsigned char motor, unsigned char dir, unsigned char speed){
-	return _driver.DriveOutput(motor, dir ? speed: -speed);
-	/*uint8_t ind = (motor - 1) & 0x03;
-	int pwmReg1 = (ind << 1) + 0x02;
-	int pwmReg2 = (ind << 1) + 0x03;
-	int stateReg = (ind&0x02)?0x0d:0x0c;
-	uint8_t stateRegShift1 = (ind&0x01)?4:0;
-	uint8_t stateRegShift2 = stateRegShift1 + 2;
-	//printf("stateRegShift1 = %d  \n", stateRegShift1);
-	uint8_t &motorStateReg = _motorStateRegs[(ind&0x02)>>1];
-	uint8_t prevState = motorStateReg;
-	motorStateReg &= ~((0x03 << stateRegShift1) | (0x03 << stateRegShift2));
-	
-	if (dir == 0) { // forward
-		motorStateReg |= ((0x02 << stateRegShift1) | (0x00 << stateRegShift2)); // first drive line pwm, second high state
-		if (prevState != motorStateReg) wiringPiI2CWriteReg8(pca9634Fd, stateReg, motorStateReg );
-		//std::cout << std::hex <<"motorStateReg: " << (int)motorStateReg<<std::endl;
-		if (_motorSpeedReg1[ind] != speed) {
-			wiringPiI2CWriteReg8(pca9634Fd, pwmReg1, speed );
-			_motorSpeedReg1[ind] = speed;
-		}
-	} else {
-		motorStateReg |= (0x00 << stateRegShift1) | (0x02 << stateRegShift2); // first drive high state, second pwm
-		if (prevState != motorStateReg) wiringPiI2CWriteReg8(pca9634Fd, stateReg, motorStateReg );
-		if (_motorSpeedReg2[ind] != speed) {
-			wiringPiI2CWriteReg8(pca9634Fd, pwmReg2, speed );
-			_motorSpeedReg2[ind] = speed;
-		}
-	}
-
-	return 0;*/
+int PiBot::SetLedDrive(uint8_t channel, float level) {
+	if (channel <= 12)
+		_pca9685.SetPulse(channel-1, level*4096, 0);
+	else if (channel <= 12)
+		_pca9634.SetPulse(channel-13, 255 - level*255.99);
 }
 
-int PiBot::SetCurrentLimit(unsigned char value){
-	uint8_t r = (float)value * 16 / 100;
-	if (r == 16) {
-		wiringPiI2CWriteReg8(_pca9685Fd, 0x43, 0x00);
-		wiringPiI2CWriteReg8(_pca9685Fd, 0x3f, 0x10);
-	} else {
-		wiringPiI2CWriteReg8(_pca9685Fd, 0x43, r);
-		wiringPiI2CWriteReg8(_pca9685Fd, 0x3f, 0x00);
-	}
+int PiBot::SetMotorDrive(DriverOutput output, int16_t level){
+	return _mDriver[output/2]->SetOutputLevel(output%2, level);
+}
+
+int PiBot::SetCurrentLimit(uint8_t driverId, float maxCurrent) {
+	_pca9685.SetPulse(14+driverId, maxCurrent, 0);
 	return 0;
 }
 
