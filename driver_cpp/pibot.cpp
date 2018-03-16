@@ -35,10 +35,6 @@ Copyright:
 #include <math.h>
 #include <sys/time.h> 
 
-using namespace pibot;
-
-typedef void (*_PinCallbackT)();
-
 MotorDriver::MotorDriver(bool paralellMode){
 	wiringPiSetupGpio(); // Initialize wiringPi
 	pinMode(22,  OUTPUT); // deactivate enable
@@ -59,14 +55,14 @@ MotorDriver::MotorDriver(bool paralellMode){
 	pullUpDnControl(22, PUD_UP);
 	usleep(5000);
 	wiringPiI2CWriteReg8(pca9634Fd, 0x01, 0x14);
-	//std::cout<<"MotorDriver"<<std::endl;
+	std::cout<<"MotorDriver"<<std::endl;
 }
 
 MotorDriver::~MotorDriver(){
 	close(pca9634Fd);
 }
 
-int MotorDriver::SetDrive(uint8_t output, int16_t emfLevel) {
+int MotorDriver::DriveOutput(uint8_t output, int16_t emfLevel) {
 	uint8_t ind = (output - 1) & 0x03;
 	int pwmReg1 = (ind << 1) + 0x02;
 	int pwmReg2 = (ind << 1) + 0x03;
@@ -146,12 +142,12 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torq
 		}
 		
 		if (steps > 0) {
-			_driver.SetDrive(_out1, _step&0x02 ? torque : - torque);
-			_driver.SetDrive(_out2, (_step+1)&0x02 ? torque : - torque);
+			_driver.DriveOutput(_out1, _step&0x02 ? torque : - torque);
+			_driver.DriveOutput(_out2, (_step+1)&0x02 ? torque : - torque);
 			_step++;
 		} else {
-			_driver.SetDrive(_out1, (_step-1)&0x02 ? torque : - torque);
-			_driver.SetDrive(_out2, _step&0x02 ? torque : - torque);
+			_driver.DriveOutput(_out1, (_step-1)&0x02 ? torque : - torque);
+			_driver.DriveOutput(_out2, _step&0x02 ? torque : - torque);
 			_step--;
 		}
 	}
@@ -175,28 +171,31 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torq
 
 //std::vector<Encoder> encoders;
 
-/*void PiBot::UpdateEncoders()
+void PiBot::UpdateEncoders()
 {
     //for (uint8_t i = 0; i < encoders.size(); i++) encoders[i].Update();
-}*/
+}
 
-std::function<void()> _objCbFunc[5];
+std::function<void()> _objCbFunc[4];
 
 void _PinCallback0() { _objCbFunc[0](); }
 void _PinCallback1() { _objCbFunc[1](); }
 void _PinCallback2() { _objCbFunc[2](); }
 void _PinCallback3() { _objCbFunc[3](); }
-void _PinCallback4() { _objCbFunc[4](); }
 
-static _PinCallbackT _pinCbs[5] = {_PinCallback0, _PinCallback1, _PinCallback2, _PinCallback3, _PinCallback4};
+static PinCallbackT _pinCbs[4] = {_PinCallback0, _PinCallback1, _PinCallback2, _PinCallback3};
 static int _pinCbCount = 0;
 
 void ObjWiringPiISR(int val, int mask, std::function<void()> callback)
+//void Encoder::_EncWiringPiISR(int val, int mask)
 {
+  //_objCbFunc[n] = callback;
+  //wiringPiISR(val, mask, &objCallback);
   if (_pinCbCount > 3) return;
   _objCbFunc[_pinCbCount] = callback;
   wiringPiISR(val, mask, _pinCbs[_pinCbCount]);
   _pinCbCount ++;
+  std::cout<<"_pinCbCount "<<(int)_pinCbCount << ", " << val << std::endl;
 }
 
 Encoder::Encoder(int8_t pinA, int8_t pinB):
@@ -212,11 +211,18 @@ Encoder::Encoder(int8_t pinA, int8_t pinB):
 	if (pin_b >= 0) {
 		pinMode(pin_b, INPUT);
 		pullUpDnControl(pin_b, PUD_UP);
+		//wiringPiISR(pin_a,INT_EDGE_BOTH, PiBot::UpdateEncoders);
+		//objWiringPiISR(pin_a, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
+		//wiringPiISR(pin_b,INT_EDGE_BOTH, PiBot::UpdateEncoders);
+		//objWiringPiISR(pin_b, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
 		ObjWiringPiISR(pin_a, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
 		ObjWiringPiISR(pin_b, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
 	} else {
 		ObjWiringPiISR(pin_a, INT_EDGE_FALLING, std::bind(&Encoder::_UpdateCounterIsrCb, this));
+		//_EncWiringPiISR(pin_a, INT_EDGE_FALLING);
 	}
+	//std::cout<<"this "<<(int)this<<std::endl;
+	//objCallback();
 }
 
 void Encoder::_UpdateCounterIsrCb(Encoder *encoder) {
@@ -238,11 +244,31 @@ void Encoder::_UpdateIsrCb(Encoder *encoder) {
 	if(sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) encoder->counter--;
 
 	encoder->lastEncoded = encoded;
+	//if (MSB || LSB) std::cout<<"encoder triggered"<<MSB<<LSB<<std::endl;
+	//std::cout<<"encoder triggered "<<(int)encoder<<", "<<encoder->counter<<std::endl;
 }
+
+/*void PiBot::CreateEncoders() {
+	encoders.push_back(Encoder(12, 16));
+}*/
 
 PiBot::PiBot(bool paralellMode)
 {
-	// Initialize PCA9685 I2C
+	//wiringPiSetupGpio(); // Initialize wiringPi
+
+	/*pinMode(22,  OUTPUT); // deactivate enable
+	digitalWrite(22, LOW);*/
+	
+	// Initialize PCA9634
+	/*pca9634Fd = wiringPiI2CSetup(PCA9634_ADDR);
+	wiringPiI2CWriteReg8(pca9634Fd, 0x00, 0x00);
+	wiringPiI2CWriteReg8(pca9634Fd, 0x01, paralellMode?0x16:0x14);
+	wiringPiI2CWriteReg8(pca9634Fd, 0x0c, 0xaa);
+	wiringPiI2CWriteReg8(pca9634Fd, 0x0d, 0xaa);
+	
+	_motorStateRegs[0] = _motorStateRegs[1] = 0;*/
+	
+	// Initialize PCA9685
 	if ((_pca9685Fd = open("/dev/i2c-1", O_RDWR)) < 0) {
 		printf("Failed to open the bus.");
 		/* ERROR HANDLING; you can check errno to see what went wrong */
@@ -262,6 +288,12 @@ PiBot::PiBot(bool paralellMode)
 	wiringPiI2CWriteReg8(_pca9685Fd, 0x01, 0x04);
 	wiringPiI2CWriteReg8(_pca9685Fd, 0x3f, 0); //  aref1 on time
 	
+	//wiringPiI2CWriteReg8(_pca9685Fd, 0x3b, 1); // LED
+	//wiringPiI2CWriteReg8(_pca9685Fd, 0x3d, 0);
+	
+	//wiringPiI2CWriteReg8(_pca9685Fd, 0x37, 2);
+	//wiringPiI2CWriteReg8(_pca9685Fd, 0x39, 5);
+	
 	stepper[2][3] = new StepperDriver(_driver, MOTOR_DRIVER_OUTPUT_M3, MOTOR_DRIVER_OUTPUT_M4);
 	
 	encoders.push_back(new Encoder(5));
@@ -278,15 +310,18 @@ PiBot::PiBot(bool paralellMode)
 	ObjWiringPiISR(4, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb1, this));
 	ObjWiringPiISR(27, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb2, this));
 	ObjWiringPiISR(25, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb3, this));
-	
-	//digitalWrite(22, HIGH);//pinMode(22,  INPUT); // enable power
+	/*digitalWrite(22, HIGH);//pinMode(22,  INPUT); // enable power
+	usleep(2000);
+	wiringPiI2CWriteReg8(pca9634Fd, 0x01, 0x14);*/
+	//objCallback();
 }
 
 PiBot::~PiBot(){
 	pinMode(22,  OUTPUT); // deactivate enable
 	digitalWrite(22, LOW); // disable power
+	close(pca9634Fd);
 	close(_pca9685Fd);
-	//std::cout<<std::endl<<"PiBot is off"<<std::endl;
+	std::cout<<std::endl<<"PiBot is off"<<std::endl;
 }
 
 void PiBot::PowerControl(uint8_t onOff) {
@@ -320,7 +355,7 @@ int PiBot::SetPWM(uint8_t channel, uint16_t level) {
 }
 
 int PiBot::SetSpeed(unsigned char motor, unsigned char dir, unsigned char speed){
-	return _driver.SetDrive(motor, dir ? speed: -speed);
+	return _driver.DriveOutput(motor, dir ? speed: -speed);
 	/*uint8_t ind = (motor - 1) & 0x03;
 	int pwmReg1 = (ind << 1) + 0x02;
 	int pwmReg2 = (ind << 1) + 0x03;

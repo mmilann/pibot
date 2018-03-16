@@ -43,11 +43,6 @@ Copyright:
 
 #define MAX_ENCODERS	8
 
-
-void ObjWiringPiISR(int val, int mask, std::function<void()> callback);
-
-namespace pibot {
-
 typedef enum deacayModes {SLOW, FAST} deacayMode_t;
 
 class MotorDriver
@@ -55,7 +50,7 @@ class MotorDriver
 public:
 	MotorDriver(bool paralellMode = true);
 	~MotorDriver();
-	int SetDrive(uint8_t output, int16_t level);
+	int DriveOutput(uint8_t output, int16_t level);
 	deacayMode_t decayMode;
 private:
 	int pca9634Fd;
@@ -79,6 +74,14 @@ private:
 	uint32_t _prevPeriod;
 	int32_t _nextTime;
 };
+
+typedef void (*PinCallbackT)();
+void _PinCallback0();
+void _PinCallback1();
+void _PinCallback2();
+void _PinCallback3();
+
+void ObjWiringPiISR(int val, int mask, std::function<void()> callback);
 	
 class Encoder 
 {
@@ -89,13 +92,15 @@ public:
     const int pin_b; 
 	int32_t counter;
 	int32_t pulsPeriodNs;
+	//static void _UpdateIsrCb(Encoder *encoder);
 private:
 	static void _UpdateCounterIsrCb(Encoder *encoder);
+	//void _EncWiringPiISR(int val, int mask);
 	static void _UpdateIsrCb(Encoder *encoder);
+	//void Update();
 	volatile int lastEncoded;
 	std::chrono::time_point<std::chrono::high_resolution_clock> _tick;
 };
-
 void objCallback();
 class PiBot 
 {
@@ -111,7 +116,7 @@ public:
 	int SetPWM(uint8_t channel, uint16_t level);
 	float GetRangeCm(int triggerPin, int echoPin, float velocity = 340.0);
 	void SonarTrigger(int triggerPin);
-	//static void UpdateEncoders();
+	static void UpdateEncoders();
 	//deacayMode_t decayMode;
 	StepperDriver *stepper[4][4];
 	//Encoder* encoders;
@@ -182,5 +187,5 @@ public:
 private:
 	int _i2cFd;
 };
-}
+
 #endif // PIBOT_H
