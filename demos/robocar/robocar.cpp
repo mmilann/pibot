@@ -149,14 +149,14 @@ int main(void) {
 				case 'A':
 					if (c[2] == '\033' && c[1] == '[') {
 						// arrow up, speed up
-						if (((speedWheelLeft+speedWheelRight)/2-targetSpeed) > -0.1) targetSpeed += 0.1;
+						if ((speedWheelLeft-targetSpeed) > -0.1 && (speedWheelRight-targetSpeed) > -0.1) targetSpeed += 0.1;
 						//if ((speedWheelRight-targetSpeed) > -0.1) targetSpeed += 0.1;
 					}
 					break;
 				case 'B':
 					if (c[2] == '\033' && c[1] == '[') {
 						// arrow down, slow down
-						if (((speedWheelLeft+speedWheelRight)/2-targetSpeed) < 0.1 ) targetSpeed -= 0.1;
+						if ((speedWheelLeft-targetSpeed) < 0.1 && (speedWheelRight-targetSpeed) < 0.1) targetSpeed -= 0.1;
 					}
 					break;
 				case 'C':
@@ -181,6 +181,8 @@ int main(void) {
 					break;
 			}	
         }
+		cout << "GPIO5: "<<digitalRead(5)<<endl;
+		cout << "GPIO16: "<<digitalRead(16)<<endl;
 		
 		//pibot.SetPWM(16, lightLevel-1);
 
@@ -195,14 +197,14 @@ int main(void) {
 		speedWheelRight = 1000000000.0 / (20 * pibot.encoders[1]->pulsPeriodNs); // float(pibot.encoders[0]->counter - prevCnt[0]) / 2; //
 		cout << "drive: "<< (int)driveWheelLeft <<", "<< (int)driveWheelRight<< " target: "<< targetSpeed << ", speed left "<< speedWheelLeft<< ", speed right "<< speedWheelRight << endl;
 		if (speedWheelLeft > (targetSpeed+turnSpeed) ) {
-			if (driveWheelLeft > 0) driveWheelLeft -= 5;
+			if (driveWheelLeft >= 5) driveWheelLeft -= 5;
 		} else {
-			if (driveWheelLeft < 255) driveWheelLeft += 5;
+			if (driveWheelLeft <= 250) driveWheelLeft += 5;
 		}
 		if (speedWheelRight > (targetSpeed-turnSpeed) ) {
-			if (driveWheelRight > 0) driveWheelRight -= 5;
+			if (driveWheelRight >= 5) driveWheelRight -= 5;
 		} else {
-			if (driveWheelRight < 255) driveWheelRight += 5;
+			if (driveWheelRight <= 250) driveWheelRight += 5;
 		}
 		turnSpeed = 0;
 		

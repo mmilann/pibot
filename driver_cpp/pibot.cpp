@@ -54,10 +54,11 @@ PCA9634::PCA9634(int address) {
 PCA9634::~PCA9634() {
 	wiringPiI2CWriteReg8(_fd, 0x00, 0x10); // Low power mode
 	close(_fd);
-}
+} 
 
 int PCA9634::Configure(bool inverted, outputDriveT outDrv, uint8_t outne) {
-	uint8_t cfg = (inverted?0x04:0x00) | (uint8_t)outDrv | outne;
+	uint8_t cfg = (inverted?0x10:0x00) | (uint8_t)outDrv | outne;
+	//std::cout << "cfg " << (int)cfg << std::endl;
 	wiringPiI2CWriteReg8(_fd, 0x01, cfg);
 }
 
@@ -81,6 +82,7 @@ PCA9634::outputStateT PCA9634::GetState(uint8_t output){
 
 int PCA9634::SetGroupStates(uint8_t groupId, outputStateT s0, outputStateT s1, outputStateT s2, outputStateT s3) {
 	uint8_t newStates  = (uint8_t)s0 | ((uint8_t)s1 << 2) | ((uint8_t)s2 << 4) | ((uint8_t)s3 << 6);
+	//std::cout << "new states " << (int)newStates << std::endl;
 	if (newStates != _states[groupId]) {
 		wiringPiI2CWriteReg8(_fd, 0x0c+(groupId&1), newStates );
 		_states[groupId] = newStates;
@@ -134,11 +136,11 @@ MotorDriver::MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode):
 	
 	_motorStateRegs[0] = _motorStateRegs[1] = 0;*/
 	if (paralellMode) {
-		_pwmDriver.Configure(true, PCA9634::OPEN_DRAIN, 0x02);
-		_pwmDriver.SetGroupStates(id, PCA9634::ON, PCA9634::ON, PCA9634::ON, PCA9634::ON); // high impedance if open drain inverted
+		_pwmDriver.Configure(false, PCA9634::OPEN_DRAIN, 0x02);
+		_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // high impedance
 	} else {
-		_pwmDriver.Configure(true, PCA9634::TOTEM_POLE, 0x00);
-		_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // low state
+		_pwmDriver.Configure(false, PCA9634::TOTEM_POLE, 0x00);
+		_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // high state
 	}
 
 	usleep(5000);
@@ -148,8 +150,8 @@ MotorDriver::MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode):
 	pullUpDnControl(22, PUD_UP);
 	usleep(5000);
 	//wiringPiI2CWriteReg8(pca9634Fd, 0x01, 0x14);
-	_pwmDriver.Configure(true, PCA9634::TOTEM_POLE, 0x00);
-	_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // low state
+	_pwmDriver.Configure(false, PCA9634::TOTEM_POLE, 0x00);
+	_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // high state
 }
 
 MotorDriver::~MotorDriver(){
@@ -183,20 +185,23 @@ int MotorDriver::SetOutputLevel(uint8_t output, int16_t level) {
 			_motorSpeedReg2[ind] = emfReg;
 		}
 	}*/
-	uint8_t pw;
+	int16_t pw;
 	if (level >= 0) { // forward
 		// first drive line pwm, second high state
-		_inputStates[output*2] = PCA9634::PWM;
-		_inputStates[output*2+1] = PCA9634::OFF;
-		pw = level;
-	} else {
-		// first drive high state, second pwm
 		_inputStates[output*2] = PCA9634::OFF;
 		_inputStates[output*2+1] = PCA9634::PWM;
+		pw = level;
+		_pwmDriver.SetPulse(_id*4+output*2+1, pw);
+		 
+	} else {
+		// first drive high state, second pwm
+		_inputStates[output*2] = PCA9634::PWM;
+		_inputStates[output*2+1] = PCA9634::OFF;
 		pw = -level;
+		
+		_pwmDriver.SetPulse(_id*4+output*2, pw);
 	}
 	_pwmDriver.SetGroupStates(_id, _inputStates[0], _inputStates[1], _inputStates[2], _inputStates[3]);
-	_pwmDriver.SetPulse(_id*4+output*2, level);
 	return 0;
 }
 
@@ -295,7 +300,7 @@ static int _pinCbCount = 0;
 
 void ObjWiringPiISR(int val, int mask, std::function<void()> callback)
 {
-  if (_pinCbCount > 3) return;
+  if (_pinCbCount > 4) return;
   _objCbFunc[_pinCbCount] = callback;
   wiringPiISR(val, mask, _pinCbs[_pinCbCount]);
   _pinCbCount ++;
@@ -395,10 +400,12 @@ void PiBot::PowerControl(uint8_t onOff) {
 }
 
 int PiBot::SetPWM(uint8_t channel, float dutyCircle) {
-	if (channel <= 12)
+	if (channel <= 12) {
 		_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
-	else if (channel <= 12)
-		_pca9634.SetPulse(channel-13, dutyCircle*255.99);
+	} /*else if (channel <= 20) {
+		_pca9634.SetPulse(channel-17+4, dutyCircle*255.99);
+		_pca9634.SetState(channel-17+4, PCA9634::PWM);
+	}*/
 	/*uint8_t reg = 0x06 + (channel-1) * 4;
 	wiringPiI2CWriteReg8(_pca9685Fd, reg, 0); // LED
 	uint8_t v = level >> 8;
@@ -729,6 +736,7 @@ float ADConverter::Convert() {
 	I2cWrite16(_i2cFd, 0x01, 0xC383);
 	usleep(2000);
 	int val = I2cRead16(_i2cFd, 0x00);
-	float vin = (val>>3); // mV
-	std::cout << "vin: " << vin << std::endl; 
+	float v = (val>>3); // mV
+	//std::cout << "ain: " << v << std::endl; 
+	return v;
 }

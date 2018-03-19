@@ -198,13 +198,14 @@ public:
 	ADConverter adc;
 	MagAcc magacc;
 	Barometer bar;
+	PCA9634 _pca9634;
 	float dist1, dist2, dist3;
 private:
 	static void _EchoIsrCb1(PiBot *bot);
 	static void _EchoIsrCb2(PiBot *bot);
 	static void _EchoIsrCb3(PiBot *bot);
 	std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime1, _triggerTime2, _triggerTime3;
-	PCA9634 _pca9634;
+	
 	PCA9685 _pca9685;
 	//int pca9634Fd;
 	//int _pca9685Fd;

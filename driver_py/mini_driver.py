@@ -602,28 +602,17 @@ class Connection():
 			+ chr( panAngle ) + chr( tiltAngle ) \
 			+ chr( 0 )
 		msgBuffer = msgBuffer[ :-1 ] + chr( calculateCheckSum( msgBuffer ) )
-		leftDir = 1 
-		leftSpeed = 0
-		if (leftMotorSpeed < 128):
-			leftDir = 1 
-			leftSpeed = int((255 - leftMotorSpeed) * 1.23)
-		else:
-			leftDir = 0
-			leftSpeed = int(leftMotorSpeed * 1.23)
-		rightDir = 1 
-		rightSpeed = 0
-		if (rightMotorSpeed < 128):
-			rightDir = 1 
-			rightSpeed = int((255 - rightMotorSpeed) * 1.23)
-		else:
-			rightDir = 0
-			rightSpeed = int(rightMotorSpeed * 1.23)
 		
-		self.pibot.SetSpeed(1, leftDir, leftSpeed)
-		self.pibot.SetSpeed(2, rightDir, rightSpeed)
-		self.pibot.SetPWM(1, 143 + 327*panAngle/90);
-		self.pibot.SetPWM(2, 143 + 327*tiltAngle/90);
-		print panAngle,tiltAngle
+		leftDrive = int((leftMotorSpeed-128) * 3) 
+		rightDrive = int((rightMotorSpeed-128) * 3)
+		self.pibot.SetMotorDrive(DriverOutput.M1, leftDrive)
+		self.pibot.SetMotorDrive(DriverOutput.M2, rightDrive)
+		#print leftMotorSpeed, rightMotorSpeed, leftDrive, rightDrive
+		servoPanDriveDC = (143.0 + 327.0*panAngle/90)/4096
+		servoTiltDriveDC = (143.0 + 327.0*tiltAngle/90)/4096
+		self.pibot.SetPWM(1, servoPanDriveDC);
+		self.pibot.SetPWM(2, servoTiltDriveDC);
+		#print "%d %d %.2f %.2f" % (panAngle, tiltAngle, servoPanDriveDC, servoTiltDriveDC)
 		#self.serialPort.write( msgBuffer )
         
     #-----------------------------------------------------------------------------------------------
