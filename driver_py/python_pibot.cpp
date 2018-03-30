@@ -30,9 +30,11 @@ using namespace pibot;
 BOOST_PYTHON_MODULE(pibot)
 {
     class_<PiBot>("PiBot")
+		.def("Enable", &PiBot::Enable)
+		.def("InitMotorDriver", &PiBot::InitMotorDriver)
         .def("SetMotorDrive", &PiBot::SetMotorDrive)
         .def("SetPWM", &PiBot::SetPWM)
-		.add_property("adc", &PiBot::adc)
+		.def("SetServoControl", &PiBot::SetServoControl)
     ;
     class_<ADConverter>("ADConverter")
         .def("Convert", &ADConverter::Convert)
@@ -41,7 +43,17 @@ BOOST_PYTHON_MODULE(pibot)
 		.value("M1", M1)
 		.value("M2", M2)
 		.value("M3", M3)
-		.export_values()
 		.value("M4", M4)
+		.export_values()
+    ;
+	enum_<DriverId>("DriverId")
+		.value("DRIVER_M_1_2", DRIVER_M_1_2)
+		.value("DRIVER_M_3_4", DRIVER_M_3_4)
+		.export_values()
+    ;
+	enum_<DeacayMode>("DeacayMode")
+		.value("SLOW", SLOW)
+		.value("FAST", FAST)
+		.export_values()
     ;
 }

@@ -81,14 +81,13 @@ void FaultEvent(void) {
 	//printf("Fault \n");
 }
 
-void LowPower(void) {
-	printf("Low power \n");
-	PiBot::PowerControl(1);
-}
-
 int main(void) {
 	
 	PiBot pibot;
+	Encoder enc1(5), enc2(16);
+	ADConverter adc;
+	MagAcc magacc;
+	Barometer bar;
 	char c[3];
 	int lightLevel = 1;
 	float targetSpeed = 2, speedWheelLeft, speedWheelRight;
@@ -108,9 +107,12 @@ int main(void) {
 	pullUpDnControl(24, PUD_UP);
 	wiringPiISR(24, INT_EDGE_FALLING, FaultEvent);
 	
-	wiringPiISR(22, INT_EDGE_FALLING, LowPower);
 	usleep(10000);
-	//PiBot::PowerControl(1);
+	
+	pibot.InitMotorDriver(DRIVER_M_1_2);
+	pibot.InitSonar(1);
+	pibot.InitSonar(2);
+	pibot.InitSonar(3);
 	
 	pinMode(17,  OUTPUT); // zero encoder current drive on/off
 	digitalWrite(17, HIGH);
@@ -133,6 +135,8 @@ int main(void) {
 	pibot.SetPWM(14, 2048); 
 	//pibot.SetPWM(15, 2048); 
 	//pibot.SetPWM(16, 400);
+	
+	PiBot::Enable();
 
 	while (1) {
 		std::system("clear");
@@ -187,14 +191,13 @@ int main(void) {
 		//pibot.SetPWM(16, lightLevel-1);
 
 		//cout << "Light Level: "<<lightLevel<<endl;
-		cout << "magX: " << pibot.magacc.GetMagX()<< " magY: " << pibot.magacc.GetMagY()<< " magZ: " << pibot.magacc.GetMagZ() << endl;
-		cout << "accX: " << pibot.magacc.GetAccX()<< " accY: " << pibot.magacc.GetAccY()<< " accZ: " << pibot.magacc.GetAccZ() << endl;
-		cout << "pressure: " << pibot.bar.GetPressure() << endl;
-		//cout << "range [cm]: " << pibot.GetRangeCm(26, 25, 340) << endl;
-		cout << "range1 [cm]: " << pibot.dist1 << "  range2 [cm]: " << pibot.dist2 << "  range3 [cm]: " << pibot.dist3 << endl;
-		pibot.SonarTrigger(26);
-		speedWheelLeft =  1000000000.0 / (20 * pibot.encoders[0]->pulsPeriodNs); // float(pibot.encoders[1]->counter - prevCnt[1]) / 2; //
-		speedWheelRight = 1000000000.0 / (20 * pibot.encoders[1]->pulsPeriodNs); // float(pibot.encoders[0]->counter - prevCnt[0]) / 2; //
+		cout << "magX: " << magacc.GetMagX()<< " magY: " << magacc.GetMagY()<< " magZ: " << magacc.GetMagZ() << endl;
+		cout << "accX: " << magacc.GetAccX()<< " accY: " << magacc.GetAccY()<< " accZ: " << magacc.GetAccZ() << endl;
+		cout << "pressure: " << bar.GetPressure() << endl;
+		cout << "range1 [cm]: " << pibot.SonarDistance(1) << "  range2 [cm]: " << pibot.SonarDistance(2) << "  range3 [cm]: " << pibot.SonarDistance(3) << endl;
+		pibot.SonarTrigger();
+		speedWheelLeft =  1000000000.0 / (20 * enc1.pulsPeriodNs); // float(enc2.counter - prevCnt[1]) / 2; //
+		speedWheelRight = 1000000000.0 / (20 * enc2.pulsPeriodNs); // float(enc1.counter - prevCnt[0]) / 2; //
 		cout << "drive: "<< (int)driveWheelLeft <<", "<< (int)driveWheelRight<< " target: "<< targetSpeed << ", speed left "<< speedWheelLeft<< ", speed right "<< speedWheelRight << endl;
 		if (speedWheelLeft > (targetSpeed+turnSpeed) ) {
 			if (driveWheelLeft >= 5) driveWheelLeft -= 5;
@@ -211,12 +214,15 @@ int main(void) {
 		pibot.SetMotorDrive(M1, driveWheelLeft);
 		pibot.SetMotorDrive(M2, driveWheelRight);
 		
-		prevCnt[0] = pibot.encoders[0]->counter;
-		prevCnt[1] = pibot.encoders[1]->counter;
+		prevCnt[0] = enc1.counter;
+		prevCnt[1] = enc2.counter;
 		
-		pibot.adc.Convert();
+		if (pibot.IsPowerLow())
+			cout << "Low power: " << endl;
+		
+		adc.Convert();
 		usleep(100000);
-		PiBot::PowerControl(1);
+		PiBot::Enable(); 
 		
 		if( quit.load() ) break;    // exit normally after SIGINT
 	}

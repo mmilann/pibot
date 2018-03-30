@@ -41,6 +41,26 @@ using namespace pibot;
 #define MOTOR_DRIVER_OUTPUT_B	1
 
 typedef void (*_PinCallbackT)();
+void ObjWiringPiISR(int val, int mask, std::function<void()> callback);
+
+std::function<void()> _objCbFunc[5];
+
+void _PinCallback0() { _objCbFunc[0](); }
+void _PinCallback1() { _objCbFunc[1](); }
+void _PinCallback2() { _objCbFunc[2](); }
+void _PinCallback3() { _objCbFunc[3](); }
+void _PinCallback4() { _objCbFunc[4](); }
+
+static _PinCallbackT _pinCbs[5] = {_PinCallback0, _PinCallback1, _PinCallback2, _PinCallback3, _PinCallback4};
+static int _pinCbCount = 0;
+
+void ObjWiringPiISR(int val, int mask, std::function<void()> callback)
+{
+  if (_pinCbCount > 4) return;
+  _objCbFunc[_pinCbCount] = callback;
+  wiringPiISR(val, mask, _pinCbs[_pinCbCount]);
+  _pinCbCount ++;
+}
 
 PCA9634::PCA9634(int address) {
 	// Initialize
@@ -157,7 +177,7 @@ MotorDriver::MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode):
 MotorDriver::~MotorDriver(){
 }
 
-int MotorDriver::SetOutputLevel(uint8_t output, int16_t level) {
+int MotorDriver::SetOutputLevel(DriverOutput output, int16_t level) {
 	/*uint8_t ind = (output + _id*2) & 0x03;
 	int pwmReg1 = (ind << 1) + 0x02;
 	int pwmReg2 = (ind << 1) + 0x03;
@@ -186,56 +206,34 @@ int MotorDriver::SetOutputLevel(uint8_t output, int16_t level) {
 		}
 	}*/
 	int16_t pw;
+	uint8_t out = (uint8_t)output;
 	if (level >= 0) { // forward
 		// first drive line pwm, second high state
-		_inputStates[output*2] = PCA9634::OFF;
-		_inputStates[output*2+1] = PCA9634::PWM;
+		_inputStates[out*2] = PCA9634::OFF;
+		_inputStates[out*2+1] = PCA9634::PWM;
 		pw = level;
-		_pwmDriver.SetPulse(_id*4+output*2+1, pw);
+		_pwmDriver.SetPulse(_id*4+out*2+1, pw);
 		 
 	} else {
 		// first drive high state, second pwm
-		_inputStates[output*2] = PCA9634::PWM;
-		_inputStates[output*2+1] = PCA9634::OFF;
+		_inputStates[out*2] = PCA9634::PWM;
+		_inputStates[out*2+1] = PCA9634::OFF;
 		pw = -level;
 		
-		_pwmDriver.SetPulse(_id*4+output*2, pw);
+		_pwmDriver.SetPulse(_id*4+out*2, pw);
 	}
 	_pwmDriver.SetGroupStates(_id, _inputStates[0], _inputStates[1], _inputStates[2], _inputStates[3]);
 	return 0;
 }
 
-StepperDriver::StepperDriver(MotorDriver& driver, const uint8_t &output1, const uint8_t &output2):
-	_driver(driver),
+StepperDriver::StepperDriver(MotorDriver& driver):
+	_driver(driver)/*,
 	_out1(output1),
-	_out2(output2)
+	_out2(output2)*/
 {
 }
 
-int32_t StepperDriver::DriveHalfSteps(int32_t steps, uint32_t periodUs, uint8_t torque) {
-	
-	//SetSpeed(3, 0, 255);
-	/*SetSpeed(4, 0, 0);
-	usleep(periodUs);
-	SetSpeed(4, 1, 255);
-	usleep(periodUs);
-	SetSpeed(3, 0, 0);
-	usleep(periodUs);
-	SetSpeed(3, 1, 255);
-	usleep(periodUs);
-	SetSpeed(4, 1, 0);
-	usleep(periodUs);
-	SetSpeed(4, 0, 255);
-	usleep(periodUs);
-	SetSpeed(3, 1, 0);
-	usleep(periodUs);
-	SetSpeed(3, 0, 255);
-	usleep(periodUs);*/
-	
-	return 4;
-}
-
-int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torque) {
+int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t driveLevel) {
 	int32_t absSteps = steps > 0 ? steps : -steps;
 	struct timeval tv;
 	
@@ -244,21 +242,21 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torq
 		uint32_t passedTime = (tv.tv_sec-_stepTime.tv_sec)*1000000 + tv.tv_usec-_stepTime.tv_usec;
 		_stepTime = tv;
 		if (i==0 && (_prevPeriod != periodUs || passedTime > periodUs*2) ) {
-			refTime = tv;
+			_refTime = tv;
 			_nextTime = periodUs;
 		} else {
-			int32_t drive_time = (_stepTime.tv_sec-refTime.tv_sec)*1000000 + _stepTime.tv_usec-refTime.tv_usec;
+			int32_t drive_time = (_stepTime.tv_sec-_refTime.tv_sec)*1000000 + _stepTime.tv_usec-_refTime.tv_usec;
 			_nextTime += periodUs;
 			if (drive_time < _nextTime) usleep(_nextTime - drive_time);
 		}
 		
 		if (steps > 0) {
-			_driver.SetOutputLevel(_out1, _step&0x02 ? torque : - torque);
-			_driver.SetOutputLevel(_out2, (_step+1)&0x02 ? torque : - torque);
+			_driver.SetOutputLevel(M1, _step&0x02 ? driveLevel : - driveLevel);
+			_driver.SetOutputLevel(M2, (_step+1)&0x02 ? driveLevel : - driveLevel);
 			_step++;
 		} else {
-			_driver.SetOutputLevel(_out1, (_step-1)&0x02 ? torque : - torque);
-			_driver.SetOutputLevel(_out2, _step&0x02 ? torque : - torque);
+			_driver.SetOutputLevel(M1, (_step-1)&0x02 ? driveLevel : - driveLevel);
+			_driver.SetOutputLevel(M2, _step&0x02 ? driveLevel : - driveLevel);
 			_step--;
 		}
 	}
@@ -286,25 +284,6 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torq
 {
     //for (uint8_t i = 0; i < encoders.size(); i++) encoders[i].Update();
 }*/
-
-std::function<void()> _objCbFunc[5];
-
-void _PinCallback0() { _objCbFunc[0](); }
-void _PinCallback1() { _objCbFunc[1](); }
-void _PinCallback2() { _objCbFunc[2](); }
-void _PinCallback3() { _objCbFunc[3](); }
-void _PinCallback4() { _objCbFunc[4](); }
-
-static _PinCallbackT _pinCbs[5] = {_PinCallback0, _PinCallback1, _PinCallback2, _PinCallback3, _PinCallback4};
-static int _pinCbCount = 0;
-
-void ObjWiringPiISR(int val, int mask, std::function<void()> callback)
-{
-  if (_pinCbCount > 4) return;
-  _objCbFunc[_pinCbCount] = callback;
-  wiringPiISR(val, mask, _pinCbs[_pinCbCount]);
-  _pinCbCount ++;
-}
 
 Encoder::Encoder(int8_t pinA, int8_t pinB):
 	pin_a(pinA),
@@ -345,146 +324,6 @@ void Encoder::_UpdateIsrCb(Encoder *encoder) {
 	if(sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) encoder->counter--;
 
 	encoder->lastEncoded = encoded;
-}
-
-PiBot::PiBot(bool paralellMode)
-{
-	wiringPiSetupGpio(); // Initialize wiringPi
-	pinMode(22,  OUTPUT); // deactivate enable
-	digitalWrite(22, LOW);
-
-	_mDriver[0] = new MotorDriver(0, _pca9634);
-	_mDriver[1] = new MotorDriver(1, _pca9634);
-	
-	stepper[2][3] = new StepperDriver(*(_mDriver[1]), 2, 3);
-	
-	encoders.push_back(new Encoder(5));
-	encoders.push_back(new Encoder(16));
-	
-	std::cout<<encoders.size()<<std::endl;
-	
-	pinMode(4, INPUT);
-	pullUpDnControl(4, PUD_UP);
-	pinMode(27, INPUT);  
-	pullUpDnControl(27, PUD_UP);
-	pinMode(25, INPUT);
-	pullUpDnControl(25, PUD_UP);
-	ObjWiringPiISR(4, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb1, this));
-	ObjWiringPiISR(27, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb2, this));
-	ObjWiringPiISR(25, INT_EDGE_RISING, std::bind(&PiBot::_EchoIsrCb3, this));
-	
-	//digitalWrite(22, HIGH);//pinMode(22,  INPUT); // enable power
-}
-
-PiBot::~PiBot(){
-	pinMode(22,  OUTPUT); // deactivate enable
-	digitalWrite(22, LOW); // disable power
-	delete _mDriver[0];
-	delete _mDriver[1];
-	//close(_pca9685Fd);
-	//std::cout<<std::endl<<"PiBot is off"<<std::endl;
-}
-
-void PiBot::PowerControl(uint8_t onOff) {
-	if (onOff) { 
-		// enable power
-		pullUpDnControl(22, PUD_UP);
-		//pinMode(22,  INPUT);
-	} else {
-		// deactivate enable
-		//digitalWrite(22, LOW);
-		//pinMode(22,  OUTPUT);
-		pullUpDnControl(22, PUD_DOWN);
-		//pinMode(22,  INPUT);
-	}
-}
-
-int PiBot::SetPWM(uint8_t channel, float dutyCircle) {
-	if (channel <= 12) {
-		_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
-	} /*else if (channel <= 20) {
-		_pca9634.SetPulse(channel-17+4, dutyCircle*255.99);
-		_pca9634.SetState(channel-17+4, PCA9634::PWM);
-	}*/
-	/*uint8_t reg = 0x06 + (channel-1) * 4;
-	wiringPiI2CWriteReg8(_pca9685Fd, reg, 0); // LED
-	uint8_t v = level >> 8;
-	wiringPiI2CWriteReg8(_pca9685Fd, reg + 1, 0);
-	wiringPiI2CWriteReg8(_pca9685Fd, reg + 2, level); // LED
-	wiringPiI2CWriteReg8(_pca9685Fd, reg + 3, v);*/
-	/*uint8_t data[5] = {0, 0, 0, 0};
-	data[0] = 0x06 + (channel-1) * 4;
-	write(_pca9685Fd, data, 1);
-	data[0] = level & 0xFF;
-	data[1] = (level >> 8) & 0x0F;
-	write(_pca9685Fd, data, 4);*/
-	return 0;
-}
-
-int PiBot::SetLedDrive(uint8_t channel, float level) {
-	if (channel <= 12)
-		_pca9685.SetPulse(channel-1, level*4096, 0);
-	else if (channel <= 12)
-		_pca9634.SetPulse(channel-13, 255 - level*255.99);
-}
-
-int PiBot::SetMotorDrive(DriverOutput output, int16_t level){
-	return _mDriver[output/2]->SetOutputLevel(output%2, level);
-}
-
-int PiBot::SetCurrentLimit(uint8_t driverId, float maxCurrent) {
-	_pca9685.SetPulse(14+driverId, maxCurrent, 0);
-	return 0;
-}
-
-float PiBot::GetRangeCm(int triggerPin, int echoPin, float velocity) {
-	pinMode(echoPin,  INPUT);
-	pullUpDnControl(echoPin, PUD_UP);
-	pinMode(triggerPin,  OUTPUT);
-	digitalWrite(triggerPin, HIGH);   // trigger
-	
-	usleep(30);
-	digitalWrite(triggerPin, LOW);
-	
-	struct timeval cur_time1, cur_time2;
-	int cnt = 0;
-	while( (digitalRead(echoPin)==1) && cnt++ < 100 ) usleep(10);
-	gettimeofday(&cur_time1,NULL);
-	cnt = 0;
-	while( (digitalRead(echoPin)==0) && cnt++ < 35000 ) usleep(10);
-	gettimeofday(&cur_time2,NULL);
-	
-	return ( (double)(cur_time2.tv_usec - cur_time1.tv_usec) / 1000000 + cur_time2.tv_sec - cur_time1.tv_sec ) * velocity / 2 * 100;
-}
-
-void PiBot::_EchoIsrCb1(PiBot *bot) {
-	std::chrono::time_point<std::chrono::high_resolution_clock> tickNow = std::chrono::high_resolution_clock::now();
-	double echoPeriodNs = (tickNow - bot->_triggerTime1).count();
-	bot->dist1 = echoPeriodNs * 340 / 1000000000 / 2 * 100;
-	//bot->_triggerTime1 = tickNow;
-	//std::cout<<"echotime1 "<< echoPeriodNs << std::endl;
-}
-
-void PiBot::_EchoIsrCb2(PiBot *bot) {
-	std::chrono::time_point<std::chrono::high_resolution_clock> tickNow = std::chrono::high_resolution_clock::now();
-	double echoPeriodNs = (tickNow - bot->_triggerTime2).count();
-	bot->dist2 = echoPeriodNs * 340 / 1000000000 / 2 * 100;
-	//std::cout<<"echotime2 "<< echoPeriodNs << std::endl;
-}
-
-void PiBot::_EchoIsrCb3(PiBot *bot) {
-	std::chrono::time_point<std::chrono::high_resolution_clock> tickNow = std::chrono::high_resolution_clock::now();
-	double echoPeriodNs = (tickNow - bot->_triggerTime3).count();
-	bot->dist3 = echoPeriodNs * 340 / 1000000000 / 2 * 100;
-	std::cout<<"echotime3 "<< echoPeriodNs << std::endl;
-}
-
-void PiBot::SonarTrigger(int triggerPin) {
-	pinMode(triggerPin,  OUTPUT);
-	digitalWrite(triggerPin, HIGH);
-	usleep(15);                
-	digitalWrite(triggerPin, LOW); 
-	_triggerTime1 = _triggerTime2 = _triggerTime3 = std::chrono::high_resolution_clock::now();
 }
 
 MagAcc::MagAcc() {
@@ -740,3 +579,198 @@ float ADConverter::Convert() {
 	//std::cout << "ain: " << v << std::endl; 
 	return v;
 }
+
+SonarDriver::SonarDriver(uint8_t channel) {
+	static int8_t echoPin[] = {4, 27, 25, 12, 17};
+	int pin = echoPin[channel-1];
+	pinMode(pin, INPUT);
+	pullUpDnControl(pin, PUD_UP);
+	ObjWiringPiISR(pin, INT_EDGE_RISING, std::bind(&SonarDriver::_EchoIsrCb, this));
+}
+
+void SonarDriver::Triggered() {
+	_triggerTime = std::chrono::high_resolution_clock::now();
+}
+/*
+SonarDriver::_EvalEcho(uint8_t id) {
+	std::chrono::time_point<std::chrono::high_resolution_clock> tickNow = std::chrono::high_resolution_clock::now();
+	double echoPeriodNs = (tickNow - sonar->_triggerTime[id]).count();
+	sonar->dist[id] = echoPeriodNs * 340 / 1000000000 / 2 * 100;
+	//bot->_triggerTime1 = tickNow;
+	std::cout<<"echotime1 "<< echoPeriodNs << std::endl;
+}*/
+
+void SonarDriver::_EchoIsrCb(SonarDriver *sonar) {
+	std::chrono::time_point<std::chrono::high_resolution_clock> tickNow = std::chrono::high_resolution_clock::now();
+	double echoPeriodNs = (tickNow - sonar->_triggerTime).count();
+	sonar->dist = echoPeriodNs * 340 / 1000000000 / 2 * 100;
+	//bot->_triggerTime1 = tickNow;
+	//std::cout<<"echotime1 "<< echoPeriodNs << std::endl;
+}
+
+PiBot::PiBot(bool watchdogMode)
+{
+	wiringPiSetupGpio(); // Initialize wiringPi
+	pinMode(22,  OUTPUT); // deactivate enable
+	digitalWrite(22, LOW);
+	usleep(100);
+	pinMode(22,  INPUT);
+	pullUpDnControl(22, PUD_DOWN);
+	
+	_wdMode = watchdogMode;
+	_lowPowerEvent = false;
+	
+	wiringPiISR(22, INT_EDGE_FALLING, _LowPowerCb);
+	
+	pinMode(26,  OUTPUT); // Sonars trigger
+	
+	_mDriver[0] = _mDriver[1] = NULL;
+	_stepDrv[0] = _stepDrv[1] = NULL;
+	//stepper[2][3] = new StepperDriver(*(_mDriver[1]), 2, 3);
+	
+	//encoders.push_back(new Encoder(5));
+	//encoders.push_back(new Encoder(16));
+	
+	//std::cout<<encoders.size()<<std::endl;
+	
+	for (int i = 0; i < 5; i++ ) 
+		_sonars[i] = NULL;
+	
+	//digitalWrite(22, HIGH);//pinMode(22,  INPUT); // enable power
+}
+
+PiBot::~PiBot(){
+	Disable();
+	delete _mDriver[0];
+	delete _mDriver[1];
+	delete _stepDrv[0];
+	delete _stepDrv[1];
+	for (int i = 0; i < 5; i++ )
+		delete _sonars[i];
+	
+}
+
+bool PiBot::_lowPowerEvent = false;
+bool PiBot::_wdMode;
+
+void PiBot::_LowPowerCb(void) {
+	Disable();
+	_lowPowerEvent = true;
+	//printf("Low power \n");
+	//PiBot::PowerControl(1);
+}
+
+void PiBot::Enable() {
+	// discharge cap
+	pinMode(22,  OUTPUT); 
+	digitalWrite(22, HIGH);
+	usleep(10); 
+	// set to power monitor mode
+	pinMode(22,  INPUT);
+	if (_wdMode) {
+		pullUpDnControl(22, PUD_OFF);
+	} else {
+		pullUpDnControl(22, PUD_UP);
+	}
+	if (digitalRead(22)==0) { 
+		// unsuccessful try
+		digitalWrite(22, LOW);
+		pinMode(22,  OUTPUT);
+		_lowPowerEvent = true;
+	} else {
+		_lowPowerEvent = false;
+	}
+}
+
+void PiBot::Disable() {
+	digitalWrite(22, LOW);
+	pinMode(22,  OUTPUT); 
+}
+
+int PiBot::InitMotorDriver(DriverId driverId, bool paralellMode) {
+	if (_mDriver[(uint8_t)driverId] != NULL) 
+		delete _mDriver[(uint8_t)driverId];
+	_mDriver[(uint8_t)driverId] = new MotorDriver(driverId, _pca9634);
+	return 0;
+}
+
+int PiBot::InitStepperDriver(DriverId driverId) {
+	if (_stepDrv[(uint8_t)driverId])
+		delete _stepDrv[(uint8_t)driverId];
+	_stepDrv[(uint8_t)driverId] = new StepperDriver(*(_mDriver[(uint8_t)driverId]));
+	return 0;
+}
+
+StepperDriver& PiBot::Stepper(DriverId driverId) {
+	return *_stepDrv[(uint8_t)driverId];
+}
+
+int PiBot::InitSonar(uint8_t channel) {
+	if (_sonars[channel-1] != NULL)
+		delete _sonars[channel-1];
+	_sonars[channel-1] = new SonarDriver(channel);
+}
+
+float PiBot::SonarDistance(uint8_t channel) {
+	return _sonars[channel-1]->GetDistance();
+}
+
+void PiBot::SonarTrigger() {
+	digitalWrite(26, HIGH);
+	usleep(15);                
+	digitalWrite(26, LOW); 
+	for (int i = 0; i < 5; i++ )
+		if (_sonars[i]) _sonars[i]->Triggered();
+}
+
+int PiBot::SetPWM(uint8_t channel, float dutyCircle) {
+	if (channel <= 16) {
+		_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
+	} else if (channel <= 20) {
+		_pca9634.SetPulse(channel-17+4, dutyCircle*255.99);
+		_pca9634.SetState(channel-17+4, PCA9634::PWM);
+	}
+	return 0;
+}
+
+int PiBot::SetLedDrive(uint8_t channel, float level) {
+	if (channel <= 16)
+		_pca9685.SetPulse(channel-1, level*4096, 0);
+	else if (channel <= 20)
+		_pca9634.SetPulse(channel-17+4, 255 - level*255.99);
+}
+
+int PiBot::SetMotorDrive(DriverOutput output, int16_t level, DeacayMode deacayMode){
+	return _mDriver[output/2]->SetOutputLevel((DriverOutput)(output%2), level);
+}
+
+int PiBot::SetDriverLimit(DriverId driverId, float maxCurrent) {
+	_pca9685.SetPulse(14+(uint8_t)driverId, maxCurrent, 0);
+	return 0;
+}
+
+int PiBot::SetServoControl(uint8_t channel, uint16_t pulseWidthUs) {
+	if (channel <= 16) {
+		_pca9685.SetPulse(channel-1, 0, pulseWidthUs*4096/20000);
+	}
+}
+
+/*float PiBot::GetRangeCm(int triggerPin, int echoPin, float velocity) {
+	pinMode(echoPin,  INPUT);
+	pullUpDnControl(echoPin, PUD_UP);
+	pinMode(triggerPin,  OUTPUT);
+	digitalWrite(triggerPin, HIGH);   // trigger
+	
+	usleep(30);
+	digitalWrite(triggerPin, LOW);
+	
+	struct timeval cur_time1, cur_time2;
+	int cnt = 0;
+	while( (digitalRead(echoPin)==1) && cnt++ < 100 ) usleep(10);
+	gettimeofday(&cur_time1,NULL);
+	cnt = 0;
+	while( (digitalRead(echoPin)==0) && cnt++ < 35000 ) usleep(10);
+	gettimeofday(&cur_time2,NULL);
+	
+	return ( (double)(cur_time2.tv_usec - cur_time1.tv_usec) / 1000000 + cur_time2.tv_sec - cur_time1.tv_sec ) * velocity / 2 * 100;
+}*/

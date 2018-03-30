@@ -43,13 +43,12 @@ Copyright:
 
 #define MAX_ENCODERS	8
 
-enum DriverOutput { M1=0, M2, M3, M4 };
-
-void ObjWiringPiISR(int val, int mask, std::function<void()> callback);
-
 namespace pibot {
-
-typedef enum deacayModes {SLOW, FAST} deacayMode_t;
+	
+enum DriverId { DRIVER_M_1_2=0, DRIVER_M_3_4 };
+enum DriverOutput { M1=0, M2, M3, M4 };
+enum DeacayMode {SLOW, FAST};
+enum EncoderChannel { ENC1=0, ENC2 };
 
 class PCA9634
 {
@@ -84,8 +83,7 @@ class MotorDriver
 public:
 	MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode = false);
 	~MotorDriver();
-	int SetOutputLevel(uint8_t output, int16_t level);
-	deacayMode_t decayMode;
+	int SetOutputLevel(DriverOutput output, int16_t level);
 private:
 	int _id;
 	//int pca9634Fd;
@@ -96,18 +94,17 @@ private:
 	unsigned char _motorSpeedReg2[2];*/
 };
 
-class StepperDriver 
+class StepperDriver
 {
 public:
-	StepperDriver(MotorDriver& driver, const uint8_t &output1, const uint8_t &output2);
-	int32_t DriveSteps(int32_t steps, uint32_t periodUs, uint8_t torque = 255);
-	int32_t DriveHalfSteps(int32_t steps, uint32_t periodUs, uint8_t torque = 255);
+	StepperDriver(MotorDriver& driver);
+	int32_t DriveSteps(int32_t steps, uint32_t periodUs, uint8_t driveLevel = 255);
+	int32_t GetStep() {return _step;}
 private:
 	MotorDriver& _driver;
-	const uint8_t _out1, _out2;
 	int32_t _step;
 	struct timeval _stepTime;
-	struct timeval refTime;
+	struct timeval _refTime;
 	uint32_t _prevPeriod;
 	int32_t _nextTime;
 };
@@ -178,38 +175,62 @@ private:
 	int _i2cFd;
 };
 
+class SonarDriver
+{
+public:
+	SonarDriver(uint8_t channel);
+	//~SonarDriver();
+	void Triggered();
+	float GetDistance() {return dist;}
+private:
+	static void _EchoIsrCb(SonarDriver *driver);
+	/*static void _EchoIsrCb2(SonarDriver *driver);
+	static void _EchoIsrCb3(SonarDriver *driver);
+	static void _EchoIsrCb2(SonarDriver *driver);
+	static void _EchoIsrCb3(SonarDriver *driver);*/
+	//void _EvalEcho(uint8_t id);
+	float dist;
+	std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime;
+};
+
 class PiBot 
 {
 public:
-	PiBot(bool paralellMode = false);
+	PiBot(bool watchdogMode = false);
 	~PiBot();
-	int SetMotorDrive(DriverOutput output, int16_t level);
-	//int SetWheelSpeed(unsigned char wheel, int16_t rpm);
-	int SetCurrentLimit(uint8_t driverId, float maxCurrent);
-	static void PowerControl(uint8_t onOff);
+	int InitMotorDriver(DriverId driverId, bool paralellMode = false);
+	int SetMotorDrive(DriverOutput output, int16_t level, DeacayMode deacayMode = SLOW);
+	int SetDriverLimit(DriverId driverId, float maxCurrent); // Sets maximum driver chopping current
+	int InitStepperDriver(DriverId driverId);
+	StepperDriver& Stepper(DriverId driverId);
+	int InitSonar(uint8_t channel);
+	float SonarDistance(uint8_t channel);
+	static void Enable();
+	static void Disable();
+	bool IsPowerLow() {return _lowPowerEvent;}
 	//int32_t DriveSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
 	//int32_t DriveHalfSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
 	int SetPWM(uint8_t channel, float dutyCircle);
 	int SetLedDrive(uint8_t channel, float level);
-	float GetRangeCm(int triggerPin, int echoPin, float velocity = 340.0);
-	void SonarTrigger(int triggerPin);
-	StepperDriver *stepper[4][4];
-	std::vector<Encoder*> encoders;
-	ADConverter adc;
-	MagAcc magacc;
-	Barometer bar;
-	PCA9634 _pca9634;
-	float dist1, dist2, dist3;
+	int SetServoControl(uint8_t channel, uint16_t pulseWidthUs);
+	//float GetRangeCm(int triggerPin, int echoPin, float velocity = 340.0);
+	void SonarTrigger();
 private:
-	static void _EchoIsrCb1(PiBot *bot);
-	static void _EchoIsrCb2(PiBot *bot);
-	static void _EchoIsrCb3(PiBot *bot);
-	std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime1, _triggerTime2, _triggerTime3;
+	static void _LowPowerCb(void);
+	//static void _EchoIsrCb1(PiBot *bot);
+	//static void _EchoIsrCb2(PiBot *bot);
+	//static void _EchoIsrCb3(PiBot *bot);
+	//std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime1, _triggerTime2, _triggerTime3;
 	
 	PCA9685 _pca9685;
+	PCA9634 _pca9634;
 	//int pca9634Fd;
 	//int _pca9685Fd;
 	MotorDriver *_mDriver[2];
+	StepperDriver *_stepDrv[2];
+	SonarDriver *_sonars[5];
+	static bool _lowPowerEvent;
+	static bool _wdMode;
 	/*int32_t _step[4][4];
 	struct timeval _stepTime[4][4];
 	struct timeval refTime[4][4];
