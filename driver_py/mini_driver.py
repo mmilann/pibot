@@ -321,7 +321,7 @@ class SerialReadProcess( threading.Thread ):
             
             startTime = time.time()
             
-            numBytesAvailable = self.serialPort.inWaiting()
+            numBytesAvailable = 0#self.serialPort.inWaiting()
             if numBytesAvailable > 0:
                 
                 newBytes = self.serialPort.read( numBytesAvailable )
@@ -467,6 +467,9 @@ class Connection():
     #-----------------------------------------------------------------------------------------------
     def __init__( self, serialPortName, baudRate ):
 		self.pibot = PiBot()
+		self.pibot.InitMotorDriver(DriverId.DRIVER_M_1_2, False)
+		self.pibot.Enable
+		
 		self.serialPort = None #serial.Serial( serialPortName, baudRate, timeout=0 )
 		
 		self.responseQueue = Queue.Queue()
@@ -605,13 +608,13 @@ class Connection():
 		
 		leftDrive = int((leftMotorSpeed-128) * 3) 
 		rightDrive = int((rightMotorSpeed-128) * 3)
-		self.pibot.SetMotorDrive(DriverOutput.M1, leftDrive)
-		self.pibot.SetMotorDrive(DriverOutput.M2, rightDrive)
+		self.pibot.SetMotorDrive(DriverOutput.M1, leftDrive, DeacayMode.SLOW)
+		self.pibot.SetMotorDrive(DriverOutput.M2, rightDrive, DeacayMode.SLOW)
 		#print leftMotorSpeed, rightMotorSpeed, leftDrive, rightDrive
-		servoPanDriveDC = (143.0 + 327.0*panAngle/90)/4096
-		servoTiltDriveDC = (143.0 + 327.0*tiltAngle/90)/4096
-		self.pibot.SetPWM(1, servoPanDriveDC);
-		self.pibot.SetPWM(2, servoTiltDriveDC);
+		servoPanDrive = int(698 + 1597.0*panAngle/90)
+		servoTiltDrive = int(698 + 1597.0*tiltAngle/90)
+		self.pibot.SetServoControl(1, servoPanDrive);
+		self.pibot.SetServoControl(2, servoTiltDrive);
 		#print "%d %d %.2f %.2f" % (panAngle, tiltAngle, servoPanDriveDC, servoTiltDriveDC)
 		#self.serialPort.write( msgBuffer )
         
