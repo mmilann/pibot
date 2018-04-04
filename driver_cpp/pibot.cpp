@@ -285,30 +285,39 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t driv
     //for (uint8_t i = 0; i < encoders.size(); i++) encoders[i].Update();
 }*/
 
-Encoder::Encoder(int8_t pinA, int8_t pinB):
+Encoder::Encoder(int16_t countsPerRevolution, int8_t pinA, int8_t pinB):
+	cpr(countsPerRevolution),
 	pin_a(pinA),
 	pin_b(pinB),
 	counter(0),
-	lastEncoded(0)
+	_lastEncoded(0)
 {
-	if (pinA < 0) return;
+	if (pinA < 0 || pinB < 0) return;
     pinMode(pin_a, INPUT); 
 	pullUpDnControl(pin_a, PUD_UP);
-    
-	if (pin_b >= 0) {
-		pinMode(pin_b, INPUT);
-		pullUpDnControl(pin_b, PUD_UP);
-		ObjWiringPiISR(pin_a, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
-		ObjWiringPiISR(pin_b, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
-	} else {
-		ObjWiringPiISR(pin_a, INT_EDGE_FALLING, std::bind(&Encoder::_UpdateCounterIsrCb, this));
-	}
+	pinMode(pin_b, INPUT);
+	pullUpDnControl(pin_b, PUD_UP);
+	ObjWiringPiISR(pin_a, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
+	ObjWiringPiISR(pin_b, INT_EDGE_BOTH, std::bind(&Encoder::_UpdateIsrCb, this));
+}
+
+Encoder::Encoder(int16_t countsPerRevolution, int8_t pin):
+	cpr(countsPerRevolution),
+	pin_a(pin),
+	pin_b(-1),
+	counter(0),
+	_lastEncoded(0)
+{
+	if (pin < 0) return; 
+    pinMode(pin_a, INPUT); 
+	pullUpDnControl(pin_a, PUD_UP);
+	ObjWiringPiISR(pin_a, INT_EDGE_FALLING, std::bind(&Encoder::_UpdateCounterIsrCb, this));
 }
 
 void Encoder::_UpdateCounterIsrCb(Encoder *encoder) {
 	std::chrono::time_point<std::chrono::high_resolution_clock> tickNow = std::chrono::high_resolution_clock::now();
-	encoder->pulsPeriodNs = (tickNow - encoder->_tick).count();
-	encoder->_tick = tickNow;
+	encoder->_pulsePeriodNs = (tickNow - encoder->_tick).count();
+	encoder->_tick = tickNow; 
 	encoder->counter++;
 	//std::cout<<"encoder triggered "<<(int)encoder<<", "<<encoder->counter<<std::endl;
 }
@@ -318,12 +327,20 @@ void Encoder::_UpdateIsrCb(Encoder *encoder) {
 	int LSB = digitalRead(encoder->pin_b);
 
 	int encoded = (MSB << 1) | LSB;
-	int sum = (encoder->lastEncoded << 2) | encoded;
+	int sum = (encoder->_lastEncoded << 2) | encoded;
 
 	if(sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) encoder->counter++;
 	if(sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) encoder->counter--;
 
-	encoder->lastEncoded = encoded;
+	encoder->_lastEncoded = encoded;
+}
+
+float Encoder::AngularSpeed() {
+	return 1000000000.0 / (cpr * _pulsePeriodNs) * 2 * 3.14159;
+}
+
+float Encoder::LinearSpeed(float radius_mm) {
+	return radius_mm * AngularSpeed() / 1000;
 }
 
 MagAcc::MagAcc() {
@@ -742,6 +759,11 @@ int PiBot::SetLedDrive(uint8_t channel, float level) {
 
 int PiBot::SetMotorDrive(DriverOutput output, int16_t level, DeacayMode deacayMode){
 	return _mDriver[output/2]->SetOutputLevel((DriverOutput)(output%2), level);
+}
+
+int PiBot::SetCurrentDrive(uint8_t channel, float current_mA) {
+	if (channel <= 16)
+		_pca9685.SetPulse(channel-1, 0, current_mA * 4096 * 47 / 5000);
 }
 
 int PiBot::SetDriverLimit(DriverId driverId, float maxCurrent) {

@@ -84,19 +84,19 @@ void FaultEvent(void) {
 int main(void) {
 	
 	PiBot pibot;
-	Encoder enc1(5), enc2(16);
+	Encoder enc1(20, 5), enc2(20, 16);
 	ADConverter adc;
 	MagAcc magacc;
 	Barometer bar;
 	char c[3];
 	int lightLevel = 1;
-	float targetSpeed = 2, speedWheelLeft, speedWheelRight;
+	float targetSpeed = 3, speedWheelLeft, speedWheelRight;
 	float turnSpeed = 0;
-	uint8_t driveWheelLeft = 220, driveWheelRight = 220;
+	int16_t driveWheelLeft = 60, driveWheelRight = 60; 
 	int prevCnt[2];
     struct sigaction sa;
 	
-    memset( &sa, 0, sizeof(sa) );
+    memset( &sa, 0, sizeof(sa) ); 
     sa.sa_handler = quit_signal;
     sigfillset(&sa.sa_mask);
     sigaction(SIGINT,&sa,NULL); 
@@ -119,22 +119,9 @@ int main(void) {
 	
 	//pibot.SetCurrentLimit(10);
 	
-	pibot.SetPWM(1, 2048); 
-	pibot.SetPWM(2, 2048); 
-	pibot.SetPWM(3, 2048); 
-	pibot.SetPWM(4, 2048); 
-	pibot.SetPWM(5, 2048); 
-	pibot.SetPWM(6, 2048); 
-	pibot.SetPWM(7, 2048); 
-	pibot.SetPWM(8, 2048); 
-	pibot.SetPWM(9, 2048); 
-	pibot.SetPWM(10, 2048); 
-	pibot.SetPWM(11, 2048); 
-	pibot.SetPWM(12, 2048); 
-	pibot.SetPWM(13, 2048); 
-	pibot.SetPWM(14, 2048); 
-	//pibot.SetPWM(15, 2048); 
-	//pibot.SetPWM(16, 400);
+	//pibot.SetPWM(1, 2048); 
+
+	pibot.SetCurrentDrive(16, 10);
 	
 	PiBot::Enable();
 
@@ -153,14 +140,14 @@ int main(void) {
 				case 'A':
 					if (c[2] == '\033' && c[1] == '[') {
 						// arrow up, speed up
-						if ((speedWheelLeft-targetSpeed) > -0.1 && (speedWheelRight-targetSpeed) > -0.1) targetSpeed += 0.1;
+						if ((speedWheelLeft-targetSpeed) > -1 && (speedWheelRight-targetSpeed) > -1) targetSpeed += 1;
 						//if ((speedWheelRight-targetSpeed) > -0.1) targetSpeed += 0.1;
 					}
 					break;
 				case 'B':
 					if (c[2] == '\033' && c[1] == '[') {
 						// arrow down, slow down
-						if ((speedWheelLeft-targetSpeed) < 0.1 && (speedWheelRight-targetSpeed) < 0.1) targetSpeed -= 0.1;
+						if ((speedWheelLeft-targetSpeed) < 1 && (speedWheelRight-targetSpeed) < 1) targetSpeed -= 1;
 					}
 					break;
 				case 'C':
@@ -185,9 +172,7 @@ int main(void) {
 					break;
 			}	
         }
-		cout << "GPIO5: "<<digitalRead(5)<<endl;
-		cout << "GPIO16: "<<digitalRead(16)<<endl;
-		
+		 
 		//pibot.SetPWM(16, lightLevel-1);
 
 		//cout << "Light Level: "<<lightLevel<<endl;
@@ -196,16 +181,16 @@ int main(void) {
 		cout << "pressure: " << bar.GetPressure() << endl;
 		cout << "range1 [cm]: " << pibot.SonarDistance(1) << "  range2 [cm]: " << pibot.SonarDistance(2) << "  range3 [cm]: " << pibot.SonarDistance(3) << endl;
 		pibot.SonarTrigger();
-		speedWheelLeft =  1000000000.0 / (20 * enc1.pulsPeriodNs); // float(enc2.counter - prevCnt[1]) / 2; //
-		speedWheelRight = 1000000000.0 / (20 * enc2.pulsPeriodNs); // float(enc1.counter - prevCnt[0]) / 2; //
+		speedWheelLeft =  enc1.AngularSpeed()*(driveWheelLeft<0?-1:1); // float(enc2.counter - prevCnt[1]) / 2; //
+		speedWheelRight = enc2.AngularSpeed()*(driveWheelRight<0?-1:1); // float(enc1.counter - prevCnt[0]) / 2; //
 		cout << "drive: "<< (int)driveWheelLeft <<", "<< (int)driveWheelRight<< " target: "<< targetSpeed << ", speed left "<< speedWheelLeft<< ", speed right "<< speedWheelRight << endl;
 		if (speedWheelLeft > (targetSpeed+turnSpeed) ) {
-			if (driveWheelLeft >= 5) driveWheelLeft -= 5;
+			if (driveWheelLeft >= -250) driveWheelLeft -= 5;
 		} else {
 			if (driveWheelLeft <= 250) driveWheelLeft += 5;
 		}
 		if (speedWheelRight > (targetSpeed-turnSpeed) ) {
-			if (driveWheelRight >= 5) driveWheelRight -= 5;
+			if (driveWheelRight >= -250) driveWheelRight -= 5;
 		} else {
 			if (driveWheelRight <= 250) driveWheelRight += 5;
 		}
@@ -217,8 +202,10 @@ int main(void) {
 		prevCnt[0] = enc1.counter;
 		prevCnt[1] = enc2.counter;
 		
-		if (pibot.IsPowerLow())
+		if (pibot.IsPowerLow()) {
 			cout << "Low power: " << endl;
+			break;
+		}
 		
 		adc.Convert();
 		usleep(100000);

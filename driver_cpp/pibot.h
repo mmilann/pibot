@@ -113,16 +113,20 @@ class Encoder
 {
 public:
 	friend class PiBot;
-	Encoder(int8_t pinA, int8_t pinB = -1);
+	Encoder(int16_t countsPerRevolution, int8_t pin);
+	Encoder(int16_t countsPerRevolution, int8_t pinA, int8_t pinB);
+	float AngularSpeed();
+	float LinearSpeed(float radius_mm);
+	const int cpr;
 	const int pin_a;
     const int pin_b; 
 	int32_t counter;
-	int32_t pulsPeriodNs;
 private:
 	static void _UpdateCounterIsrCb(Encoder *encoder);
 	static void _UpdateIsrCb(Encoder *encoder);
-	volatile int lastEncoded;
+	volatile int _lastEncoded;
 	std::chrono::time_point<std::chrono::high_resolution_clock> _tick;
+	float _pulsePeriodNs;
 };
 
 class MagAcc
@@ -212,6 +216,7 @@ public:
 	//int32_t DriveHalfSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
 	int SetPWM(uint8_t channel, float dutyCircle);
 	int SetLedDrive(uint8_t channel, float level);
+	int SetCurrentDrive(uint8_t channel, float current_mA);
 	int SetServoControl(uint8_t channel, uint16_t pulseWidthUs);
 	//float GetRangeCm(int triggerPin, int echoPin, float velocity = 340.0);
 	void SonarTrigger();
