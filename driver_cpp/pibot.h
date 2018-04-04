@@ -86,7 +86,6 @@ public:
 	int SetOutputLevel(DriverOutput output, int16_t level);
 private:
 	int _id;
-	//int pca9634Fd;
 	PCA9634 &_pwmDriver;
 	PCA9634::outputStateT _inputStates[4];
 	/*unsigned char _motorStateRegs[2];
@@ -188,11 +187,7 @@ public:
 	float GetDistance() {return dist;}
 private:
 	static void _EchoIsrCb(SonarDriver *driver);
-	/*static void _EchoIsrCb2(SonarDriver *driver);
-	static void _EchoIsrCb3(SonarDriver *driver);
-	static void _EchoIsrCb2(SonarDriver *driver);
-	static void _EchoIsrCb3(SonarDriver *driver);*/
-	//void _EvalEcho(uint8_t id);
+
 	float dist;
 	std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime;
 };
@@ -222,25 +217,14 @@ public:
 	void SonarTrigger();
 private:
 	static void _LowPowerCb(void);
-	//static void _EchoIsrCb1(PiBot *bot);
-	//static void _EchoIsrCb2(PiBot *bot);
-	//static void _EchoIsrCb3(PiBot *bot);
-	//std::chrono::time_point<std::chrono::high_resolution_clock> _triggerTime1, _triggerTime2, _triggerTime3;
-	
+
 	PCA9685 _pca9685;
 	PCA9634 _pca9634;
-	//int pca9634Fd;
-	//int _pca9685Fd;
 	MotorDriver *_mDriver[2];
 	StepperDriver *_stepDrv[2];
 	SonarDriver *_sonars[5];
 	static bool _lowPowerEvent;
 	static bool _wdMode;
-	/*int32_t _step[4][4];
-	struct timeval _stepTime[4][4];
-	struct timeval refTime[4][4];
-	uint32_t prevPeriod[4][4];
-	int32_t _nextT[4][4];*/
 };
 
 }

@@ -751,10 +751,17 @@ int PiBot::SetPWM(uint8_t channel, float dutyCircle) {
 }
 
 int PiBot::SetLedDrive(uint8_t channel, float level) {
-	if (channel <= 16)
+	if (channel <= 16) {
 		_pca9685.SetPulse(channel-1, level*4096, 0);
-	else if (channel <= 20)
-		_pca9634.SetPulse(channel-17+4, 255 - level*255.99);
+	} else if (channel <= 20) {
+		if (level == 0) {
+			_pca9634.SetState(channel-17+4, PCA9634::ON);
+		} else {
+			_pca9634.SetState(channel-17+4, PCA9634::PWM);
+			_pca9634.SetPulse(channel-17+4, 255 - level*255.99);
+		}
+		std::cout<<"level"<<(255 - level*255.99)<<std::endl;
+	}
 }
 
 int PiBot::SetMotorDrive(DriverOutput output, int16_t level, DeacayMode deacayMode){

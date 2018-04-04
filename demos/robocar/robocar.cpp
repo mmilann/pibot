@@ -33,6 +33,8 @@ Copyright:
 using namespace std;
 using namespace pibot;
 
+enum PiBotBoard {PIBOT_4WD, PIBOT_2WD, PIBOT_ZERO};
+
 std::atomic<bool> quit(false);    // signal flag
 
 struct termios orig_ttystate;
@@ -81,21 +83,30 @@ void FaultEvent(void) {
 	//printf("Fault \n");
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
 	
+	PiBotBoard board = PIBOT_4WD;
 	PiBot pibot;
 	Encoder enc1(20, 5), enc2(20, 16);
 	ADConverter adc;
 	MagAcc magacc;
 	Barometer bar;
 	char c[3];
-	int lightLevel = 1;
+	float lightLevel = 0;
 	float targetSpeed = 3, speedWheelLeft, speedWheelRight;
 	float turnSpeed = 0;
 	int16_t driveWheelLeft = 60, driveWheelRight = 60; 
 	int prevCnt[2];
     struct sigaction sa;
 	
+	if (argc > 1) {
+		if (string(argv[1])=="pibot_2wd") {
+			board = PIBOT_2WD;
+		} else if (string(argv[1])=="pibot_zero") {
+			board = PIBOT_ZERO;
+		}
+	}
+		
     memset( &sa, 0, sizeof(sa) ); 
     sa.sa_handler = quit_signal;
     sigfillset(&sa.sa_mask);
@@ -114,14 +125,15 @@ int main(void) {
 	pibot.InitSonar(2);
 	pibot.InitSonar(3);
 	
-	pinMode(17,  OUTPUT); // zero encoder current drive on/off
-	digitalWrite(17, HIGH);
-	
-	//pibot.SetCurrentLimit(10);
-	
-	//pibot.SetPWM(1, 2048); 
-
-	pibot.SetCurrentDrive(16, 10);
+	if (board == PIBOT_4WD) {
+		pibot.SetCurrentDrive(14, 10);
+		//pibot.SetCurrentLimit(10);
+	} else if (board == PIBOT_2WD) {
+		pibot.SetCurrentDrive(16, 10);
+	} else {
+		pinMode(17,  OUTPUT); // zero encoder current drive on/off
+		digitalWrite(17, HIGH);
+	}
 	
 	PiBot::Enable();
 
@@ -141,7 +153,6 @@ int main(void) {
 					if (c[2] == '\033' && c[1] == '[') {
 						// arrow up, speed up
 						if ((speedWheelLeft-targetSpeed) > -1 && (speedWheelRight-targetSpeed) > -1) targetSpeed += 1;
-						//if ((speedWheelRight-targetSpeed) > -0.1) targetSpeed += 0.1;
 					}
 					break;
 				case 'B':
@@ -153,29 +164,34 @@ int main(void) {
 				case 'C':
 					if (c[2] == '\033' && c[1] == '[') {
 						// arrow right
-						turnSpeed = 0.5;
+						turnSpeed = 5;
 					}
 					break;
 				case 'D':
 					if (c[2] == '\033' && c[1] == '[') {
 						// arrow left
-						turnSpeed = -0.5;
+						turnSpeed = -5;
 					}
 					break;
 				case 'l': 
-					if (lightLevel < 4096) lightLevel *= 2;
+					if (lightLevel <= 0) lightLevel = 1.0/256;
+					else if (lightLevel <= 0.5) lightLevel *= 2;
 					break;
 				case 'k':
-					if (lightLevel>=2) lightLevel /= 2; 
+					if (lightLevel>=1.0/128) lightLevel /= 2; 
+					else lightLevel = 0; 
 					break;
 				default:
 					break;
 			}	
         }
 		 
-		//pibot.SetPWM(16, lightLevel-1);
-
-		//cout << "Light Level: "<<lightLevel<<endl;
+		if (board == PIBOT_4WD) {
+			pibot.SetLedDrive(13, lightLevel);
+		} else {
+			pibot.SetLedDrive(20, lightLevel);
+		}
+		cout << "Light Level: "<<lightLevel<<endl;
 		cout << "magX: " << magacc.GetMagX()<< " magY: " << magacc.GetMagY()<< " magZ: " << magacc.GetMagZ() << endl;
 		cout << "accX: " << magacc.GetAccX()<< " accY: " << magacc.GetAccY()<< " accZ: " << magacc.GetAccZ() << endl;
 		cout << "pressure: " << bar.GetPressure() << endl;
