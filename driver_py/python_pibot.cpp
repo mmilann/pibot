@@ -37,7 +37,7 @@ BOOST_PYTHON_MODULE(pibot)
 		.def("SetServoControl", &PiBot::SetServoControl)
     ;
     class_<ADConverter>("ADConverter")
-        .def("Convert", &ADConverter::Convert)
+        .def("ConvertToVolts", &ADConverter::ConvertToVolts)
     ;
 	enum_<DriverOutput>("DriverOutput")
 		.value("M1", M1)

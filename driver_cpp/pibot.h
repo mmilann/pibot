@@ -49,6 +49,8 @@ enum DriverId { DRIVER_M_1_2=0, DRIVER_M_3_4 };
 enum DriverOutput { M1=0, M2, M3, M4 };
 enum DeacayMode {SLOW, FAST};
 enum EncoderChannel { ENC1=0, ENC2 };
+enum AdcInput {AIN_DIFF_01 = 0, AIN_DIFF_03, AIN_DIFF_13, AIN_DIFF_23, AIN0, AIN1, AIN2, AIN3};
+enum AdcFullScale {ADC_FS_6_144V = 0, ADC_FS_4_096V, ADC_FS_2_048V, ADC_FS_1_024V, ADC_FS_0_512V, ADC_FS_0_256V};
 
 class PCA9634
 {
@@ -76,6 +78,7 @@ public:
 	int SetPulse(uint8_t channel, uint16_t timeOn, uint16_t timeOff);
 private:
 	int _fd;
+	uint16_t _tOn, _tOff;
 };
 
 class MotorDriver
@@ -173,7 +176,7 @@ public:
 	ADConverter();
 	~ADConverter();
 	uint16_t GetRawConversion();
-	float Convert();
+	float ConvertToVolts(AdcInput input, AdcFullScale fullScale);
 private:
 	int _i2cFd;
 };
@@ -213,8 +216,10 @@ public:
 	int SetLedDrive(uint8_t channel, float level);
 	int SetCurrentDrive(uint8_t channel, float current_mA);
 	int SetServoControl(uint8_t channel, uint16_t pulseWidthUs);
+	float GetTemperature(float r25, float beta, float refVoltage);
 	//float GetRangeCm(int triggerPin, int echoPin, float velocity = 340.0);
 	void SonarTrigger();
+	ADConverter adc;
 private:
 	static void _LowPowerCb(void);
 

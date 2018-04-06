@@ -125,6 +125,8 @@ PCA9685::PCA9685(int address) {
 	wiringPiI2CWriteReg8(_fd, 0xFE, 0x79); // set prescale to 50 Hz, 20mS required by servos
 	wiringPiI2CWriteReg8(_fd, 0x00, 0x00);
 	wiringPiI2CWriteReg8(_fd, 0x01, 0x06); // totem-pole, high impedance when disabled
+	_tOn = 0;
+	_tOff = 0x1000;
 }
 
 PCA9685::~PCA9685() {
@@ -134,10 +136,16 @@ PCA9685::~PCA9685() {
 
 int PCA9685::SetPulse(uint8_t channel, uint16_t timeOn, uint16_t timeOff) {
 	uint8_t reg = 0x06 + (channel&0x0F) * 4;
-	wiringPiI2CWriteReg8(_fd, reg, timeOn); //
-	wiringPiI2CWriteReg8(_fd, reg + 1, timeOn >> 8);
-	wiringPiI2CWriteReg8(_fd, reg + 2, timeOff); //
-	wiringPiI2CWriteReg8(_fd, reg + 3, timeOff >> 8);
+	if (_tOn != timeOn) {
+		wiringPiI2CWriteReg8(_fd, reg, timeOn); //
+		wiringPiI2CWriteReg8(_fd, reg + 1, timeOn >> 8);
+		_tOn = timeOn;
+	}
+	if (_tOff != timeOff) {
+		wiringPiI2CWriteReg8(_fd, reg + 2, timeOff); //
+		wiringPiI2CWriteReg8(_fd, reg + 3, timeOff >> 8);
+		_tOff = timeOff;
+	}
 	return 0;
 }
 
@@ -588,13 +596,17 @@ uint16_t ADConverter::GetRawConversion() {
 	return I2cRead16(_i2cFd, 0x00);
 }
 
-float ADConverter::Convert() {
-	I2cWrite16(_i2cFd, 0x01, 0xC383);
+float ADConverter::ConvertToVolts(AdcInput input, AdcFullScale fullScale) {
+	uint16_t config = 0x8183; // 1600 SPS, start single conversion, disable comparator
+	config |= ((uint16_t)fullScale << 9);
+	config |= ((uint16_t)input << 12);
+	I2cWrite16(_i2cFd, 0x01, config);
 	usleep(2000);
-	int val = I2cRead16(_i2cFd, 0x00);
-	float v = (val>>3); // mV
-	//std::cout << "ain: " << v << std::endl; 
-	return v;
+	int16_t val = I2cRead16(_i2cFd, 0x00);
+	if (fullScale == ADC_FS_6_144V)
+		return (float)(val>>4)*3/1000;
+	else
+		return (float)(val>>(2+(uint8_t)fullScale))/1000;
 }
 
 SonarDriver::SonarDriver(uint8_t channel) {
@@ -742,26 +754,23 @@ void PiBot::SonarTrigger() {
 
 int PiBot::SetPWM(uint8_t channel, float dutyCircle) {
 	if (channel <= 16) {
-		_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
+		if (dutyCircle == 1)
+			_pca9685.SetPulse(channel-1, 0xFFFF, 0);
+		else
+			_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
 	} else if (channel <= 20) {
-		_pca9634.SetPulse(channel-17+4, dutyCircle*255.99);
-		_pca9634.SetState(channel-17+4, PCA9634::PWM);
+		if (dutyCircle == 0) {
+			_pca9634.SetState(channel-17+4, PCA9634::ON);
+		} else {
+			_pca9634.SetPulse(channel-17+4, 256-dutyCircle*256);
+			_pca9634.SetState(channel-17+4, PCA9634::PWM);
+		}
 	}
 	return 0;
 }
 
 int PiBot::SetLedDrive(uint8_t channel, float level) {
-	if (channel <= 16) {
-		_pca9685.SetPulse(channel-1, level*4096, 0);
-	} else if (channel <= 20) {
-		if (level == 0) {
-			_pca9634.SetState(channel-17+4, PCA9634::ON);
-		} else {
-			_pca9634.SetState(channel-17+4, PCA9634::PWM);
-			_pca9634.SetPulse(channel-17+4, 255 - level*255.99);
-		}
-		std::cout<<"level"<<(255 - level*255.99)<<std::endl;
-	}
+	SetPWM(channel, 1-level);
 }
 
 int PiBot::SetMotorDrive(DriverOutput output, int16_t level, DeacayMode deacayMode){
@@ -782,6 +791,13 @@ int PiBot::SetServoControl(uint8_t channel, uint16_t pulseWidthUs) {
 	if (channel <= 16) {
 		_pca9685.SetPulse(channel-1, 0, pulseWidthUs*4096/20000);
 	}
+}
+
+float PiBot::GetTemperature(float r25, float beta, float refVoltage) {
+	float vr = adc.ConvertToVolts(AIN1, ADC_FS_4_096V);
+	float r = (refVoltage - vr) / vr * 24900;
+	return 1.0 / (log((double)r/r25)/beta + (double)1.0/298.15) - 273.15;
+	//return (double)beta / log((double)r/(r25*exp(-(double)beta/298.15))) - 273.15;
 }
 
 /*float PiBot::GetRangeCm(int triggerPin, int echoPin, float velocity) {

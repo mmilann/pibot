@@ -88,7 +88,6 @@ int main(int argc, char *argv[]) {
 	PiBotBoard board = PIBOT_4WD;
 	PiBot pibot;
 	Encoder enc1(20, 5), enc2(20, 16);
-	ADConverter adc;
 	MagAcc magacc;
 	Barometer bar;
 	char c[3];
@@ -179,24 +178,28 @@ int main(int argc, char *argv[]) {
 					break;
 				case 'k':
 					if (lightLevel>=1.0/128) lightLevel /= 2; 
-					else lightLevel = 0; 
+					else lightLevel = 0;
 					break;
 				default:
 					break;
 			}	
         }
-		 
+
 		if (board == PIBOT_4WD) {
-			pibot.SetLedDrive(13, lightLevel);
+			pibot.SetLedDrive(13, 1-lightLevel);
 		} else {
-			pibot.SetLedDrive(20, lightLevel);
+			pibot.SetLedDrive(20, 1-lightLevel);
 		}
+		
+		cout <<"Input voltage: "<<pibot.adc.ConvertToVolts(AIN0, ADC_FS_4_096V)*4<<endl; 
+		cout <<"Temperature: "<<pibot.GetTemperature(10000, 3435, 3.3)<<endl; 
 		cout << "Light Level: "<<lightLevel<<endl;
 		cout << "magX: " << magacc.GetMagX()<< " magY: " << magacc.GetMagY()<< " magZ: " << magacc.GetMagZ() << endl;
 		cout << "accX: " << magacc.GetAccX()<< " accY: " << magacc.GetAccY()<< " accZ: " << magacc.GetAccZ() << endl;
 		cout << "pressure: " << bar.GetPressure() << endl;
 		cout << "range1 [cm]: " << pibot.SonarDistance(1) << "  range2 [cm]: " << pibot.SonarDistance(2) << "  range3 [cm]: " << pibot.SonarDistance(3) << endl;
 		pibot.SonarTrigger();
+		
 		speedWheelLeft =  enc1.AngularSpeed()*(driveWheelLeft<0?-1:1); // float(enc2.counter - prevCnt[1]) / 2; //
 		speedWheelRight = enc2.AngularSpeed()*(driveWheelRight<0?-1:1); // float(enc1.counter - prevCnt[0]) / 2; //
 		cout << "drive: "<< (int)driveWheelLeft <<", "<< (int)driveWheelRight<< " target: "<< targetSpeed << ", speed left "<< speedWheelLeft<< ", speed right "<< speedWheelRight << endl;
@@ -223,7 +226,6 @@ int main(int argc, char *argv[]) {
 			break;
 		}
 		
-		adc.Convert();
 		usleep(100000);
 		PiBot::Enable(); 
 		
