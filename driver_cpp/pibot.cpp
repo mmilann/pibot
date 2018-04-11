@@ -344,7 +344,12 @@ void Encoder::_UpdateIsrCb(Encoder *encoder) {
 }
 
 float Encoder::AngularSpeed() {
-	return 1000000000.0 / (cpr * _pulsePeriodNs) * 2 * 3.14159;
+	std::chrono::time_point<std::chrono::high_resolution_clock> tickNow = std::chrono::high_resolution_clock::now();
+	float timePassed = (tickNow - _tick).count();
+	if (timePassed < _pulsePeriodNs)
+		return 1000000000.0 / (cpr * _pulsePeriodNs) * 2 * 3.14159;
+	else
+		return 1000000000.0 / (cpr * timePassed) * 2 * 3.14159;
 }
 
 float Encoder::LinearSpeed(float radius_mm) {

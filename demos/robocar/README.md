@@ -1,7 +1,9 @@
 # Robocar PiBot C++ Demo Software
 
 # Dependencies: 
-WiringPi library
+WiringPi library,
+Lirc,
+sudo apt-get install WiringPi lirc liblircclient-dev
 
 # Build:
 Just type

@@ -1,7 +1,7 @@
 SRC=robocar.cpp ../../driver_cpp/pibot.cpp
 HEADERS=../../driver_cpp/pibot.h
 INC_DIR = ../../driver_cpp
-LDFLAGS= -lwiringPi
+LDFLAGS= -lwiringPi -llirc_client
 CXXFLAGS= -std=c++11 -I$(INC_DIR)
 
 robocar: ${SRC} ${HEADERS}
