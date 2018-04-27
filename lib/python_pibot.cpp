@@ -22,36 +22,40 @@ Copyright:
 ******************************************************************/
 
 #include <boost/python.hpp>
-#include "../driver_cpp/pibot.h"
+#include "pibot.h"
 
 using namespace boost::python;
 using namespace pibot;
 
+BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(InitMotorDriverOverloads, PiBot::InitMotorDriver, 1, 2)
+BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(SetMotorDriveOverloads, PiBot::SetMotorDrive, 2, 3)
+
 BOOST_PYTHON_MODULE(pibot)
 {
-    class_<PiBot>("PiBot")
+    class_<PiBot>("PiBot", init<optional<bool>>())
 		.def("Enable", &PiBot::Enable)
-		.def("InitMotorDriver", &PiBot::InitMotorDriver)
-        .def("SetMotorDrive", &PiBot::SetMotorDrive)
+		.def("InitMotorDriver", &PiBot::InitMotorDriver, InitMotorDriverOverloads())
+		.def("SetDriverLimit", &PiBot::SetDriverLimit)
+        .def("SetMotorDrive", &PiBot::SetMotorDrive, SetMotorDriveOverloads())
         .def("SetPWM", &PiBot::SetPWM)
 		.def("SetServoControl", &PiBot::SetServoControl)
     ;
     class_<ADConverter>("ADConverter")
         .def("ConvertToVolts", &ADConverter::ConvertToVolts)
     ;
-	enum_<DriverOutput>("DriverOutput")
+	enum_<DriverOutput>("")
 		.value("M1", M1)
 		.value("M2", M2)
 		.value("M3", M3)
 		.value("M4", M4)
 		.export_values()
     ;
-	enum_<DriverId>("DriverId")
+	enum_<DriverId>("")
 		.value("DRIVER_M_1_2", DRIVER_M_1_2)
 		.value("DRIVER_M_3_4", DRIVER_M_3_4)
 		.export_values()
     ;
-	enum_<DeacayMode>("DeacayMode")
+	enum_<DeacayMode>("")
 		.value("SLOW", SLOW)
 		.value("FAST", FAST)
 		.export_values()

@@ -466,9 +466,9 @@ class Connection():
     
     #-----------------------------------------------------------------------------------------------
     def __init__( self, serialPortName, baudRate ):
-		self.pibot = PiBot()
-		self.pibot.InitMotorDriver(DriverId.DRIVER_M_1_2, False)
-		self.pibot.Enable
+		self.pibot = PiBot(False)
+		self.pibot.InitMotorDriver(DRIVER_M_1_2, False)
+		self.pibot.Enable()
 		
 		self.serialPort = None #serial.Serial( serialPortName, baudRate, timeout=0 )
 		
@@ -608,8 +608,8 @@ class Connection():
 		
 		leftDrive = int((leftMotorSpeed-128) * 3) 
 		rightDrive = int((rightMotorSpeed-128) * 3)
-		self.pibot.SetMotorDrive(DriverOutput.M1, leftDrive, DeacayMode.SLOW)
-		self.pibot.SetMotorDrive(DriverOutput.M2, rightDrive, DeacayMode.SLOW)
+		self.pibot.SetMotorDrive(M1, leftDrive)
+		self.pibot.SetMotorDrive(M2, rightDrive)
 		#print leftMotorSpeed, rightMotorSpeed, leftDrive, rightDrive
 		servoPanDrive = int(698 + 1597.0*panAngle/90)
 		servoTiltDrive = int(698 + 1597.0*tiltAngle/90)

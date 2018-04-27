@@ -810,7 +810,7 @@ int PiBot::SetDriverLimit(DriverId driverId, float choppingCurrent) {
 int PiBot::SetServoControl(uint8_t channel, uint16_t pulseWidthUs) {
 	if (channel <= 16) {
 		//_pca9685.SetPulse(channel-1, 0, pulseWidthUs*4096/20000);
-		SetPWM(channel, pulseWidthUs/20000);
+		SetPWM(channel, (float)pulseWidthUs/20000);
 	}
 }
 
