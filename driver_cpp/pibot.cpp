@@ -28,6 +28,7 @@ Copyright:
 #include <stdio.h>
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
+//#include <linux/i2c.h>
 #include <sys/ioctl.h>
 #include <wiringPi.h>
 #include <wiringPiI2C.h>
@@ -37,8 +38,7 @@ Copyright:
 
 using namespace pibot;
 
-#define MOTOR_DRIVER_OUTPUT_A	0
-#define MOTOR_DRIVER_OUTPUT_B	1
+#define GET_S16(dL, dH)	((int16_t)((((uint16_t)(dH))<<8)|(uint8_t)(dL)))
 
 typedef void (*_PinCallbackT)();
 void ObjWiringPiISR(int val, int mask, std::function<void()> callback);
@@ -62,6 +62,34 @@ void ObjWiringPiISR(int val, int mask, std::function<void()> callback)
   _pinCbCount ++;
 }
 
+uint16_t I2cRead16(int fd, int reg) {
+	uint8_t buf[2];
+	wiringPiI2CWrite(fd, reg); 
+	usleep(100);
+	read(fd, buf, 2);
+	int res = buf[0];
+	res <<= 8;
+	res |= buf[1];
+	return res;
+}
+
+int I2cWrite16(int fd, uint8_t reg, uint16_t value) {
+	uint8_t buf[3] = {reg, (uint8_t)(value>>8), (uint8_t)value};
+	return write(fd, buf, 3);
+}
+
+uint32_t I2cRead24(int fd, int reg) {
+	uint8_t buf[3];
+	wiringPiI2CWrite(fd, reg); 
+	usleep(100);
+	read(fd, buf, 3);
+	uint32_t res = buf[0] << 8;
+	res |= buf[1];
+	res <<= 8;
+	res |= buf[2];
+	return res;
+}
+
 PCA9634::PCA9634(int address) {
 	// Initialize
 	_fd = wiringPiI2CSetup(address);
@@ -69,6 +97,7 @@ PCA9634::PCA9634(int address) {
 	wiringPiI2CWriteReg8(_fd, 0x01, 0x02);
 	_states[0] = wiringPiI2CReadReg8(_fd, 0x0c);
 	_states[1] = wiringPiI2CReadReg8(_fd, 0x0d);
+	for (int i = 0; i < 8; i++) _pw[8] = -1;
 }
 
 PCA9634::~PCA9634() {
@@ -125,8 +154,10 @@ PCA9685::PCA9685(int address) {
 	wiringPiI2CWriteReg8(_fd, 0xFE, 0x79); // set prescale to 50 Hz, 20mS required by servos
 	wiringPiI2CWriteReg8(_fd, 0x00, 0x00);
 	wiringPiI2CWriteReg8(_fd, 0x01, 0x06); // totem-pole, high impedance when disabled
-	_tOn = 0;
-	_tOff = 0x1000;
+	for (int i = 0; i < 16; i++) {
+		_tOn[i] = -1; // unknown initial register state
+		_tOff[i] = -1;
+	}
 }
 
 PCA9685::~PCA9685() {
@@ -136,15 +167,15 @@ PCA9685::~PCA9685() {
 
 int PCA9685::SetPulse(uint8_t channel, uint16_t timeOn, uint16_t timeOff) {
 	uint8_t reg = 0x06 + (channel&0x0F) * 4;
-	if (_tOn != timeOn) {
+	if (_tOn[channel] != timeOn) {
 		wiringPiI2CWriteReg8(_fd, reg, timeOn); //
 		wiringPiI2CWriteReg8(_fd, reg + 1, timeOn >> 8);
-		_tOn = timeOn;
+		_tOn[channel] = timeOn;
 	}
-	if (_tOff != timeOff) {
+	if (_tOff[channel] != timeOff) {
 		wiringPiI2CWriteReg8(_fd, reg + 2, timeOff); //
 		wiringPiI2CWriteReg8(_fd, reg + 3, timeOff >> 8);
-		_tOff = timeOff;
+		_tOff[channel] = timeOff;
 	}
 	return 0;
 }
@@ -153,66 +184,38 @@ MotorDriver::MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode):
 	_pwmDriver(pwmDriver)
 {
 	_id = id;
-	pinMode(22,  OUTPUT); // deactivate enable
-	digitalWrite(22, LOW);
-	// Initialize PCA9634
-	/*pca9634Fd = wiringPiI2CSetup(PCA9634_ADDR);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x00, 0x00);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x01, paralellMode?0x16:0x14);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x0c, 0x55);
-	wiringPiI2CWriteReg8(pca9634Fd, 0x0d, 0x55);
-	
-	_motorStateRegs[0] = _motorStateRegs[1] = 0;*/
-	if (paralellMode) {
-		_pwmDriver.Configure(false, PCA9634::OPEN_DRAIN, 0x02);
-		_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // high impedance
+	_parMode = paralellMode;
+	if (_parMode) {
+		_inputStates[0] = _inputStates[1] = PCA9634::OFF; // high impedance for ain1, ain2
+		_inputStates[2] = _inputStates[3] = PCA9634::ON; // low state for bin1, bin2
 	} else {
-		_pwmDriver.Configure(false, PCA9634::TOTEM_POLE, 0x00);
-		_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // high state
+		_inputStates[0] = _inputStates[1] = _inputStates[2] = _inputStates[3] = PCA9634::ON;
 	}
-
-	usleep(5000);
-	digitalWrite(22, HIGH); // enable power
-	usleep(2000);
-	pinMode(22,  INPUT);//
-	pullUpDnControl(22, PUD_UP);
-	usleep(5000);
-	//wiringPiI2CWriteReg8(pca9634Fd, 0x01, 0x14);
-	_pwmDriver.Configure(false, PCA9634::TOTEM_POLE, 0x00);
-	_pwmDriver.SetGroupStates(id, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF, PCA9634::OFF); // high state
+	_pwmDriver.SetGroupStates(_id, _inputStates[0], _inputStates[1], _inputStates[2], _inputStates[3]);
 }
 
 MotorDriver::~MotorDriver(){
 }
 
-int MotorDriver::SetOutputLevel(DriverOutput output, int16_t level) {
-	/*uint8_t ind = (output + _id*2) & 0x03;
-	int pwmReg1 = (ind << 1) + 0x02;
-	int pwmReg2 = (ind << 1) + 0x03;
-	int stateReg = (ind&0x02)?0x0d:0x0c;
-	uint8_t stateRegShift1 = (ind&0x01)?4:0;
-	uint8_t stateRegShift2 = stateRegShift1 + 2;
-	//printf("stateRegShift1 = %d  \n", stateRegShift1);
-	uint8_t &motorStateReg = _motorStateRegs[(ind&0x02)>>1];
-	uint8_t prevState = motorStateReg;
-	motorStateReg &= ~((0x03 << stateRegShift1) | (0x03 << stateRegShift2));
-	uint8_t emfReg = level > 0 ? level : -level;
-	if (level >= 0) { // forward
-		motorStateReg |= ((0x02 << stateRegShift1) | (0x00 << stateRegShift2)); // first drive line pwm, second high state
-		if (prevState != motorStateReg) wiringPiI2CWriteReg8(pca9634Fd, stateReg, motorStateReg );
-		//std::cout << std::hex <<"motorStateReg: " << (int)motorStateReg<<std::endl;
-		if (_motorSpeedReg1[ind] != emfReg) {
-			wiringPiI2CWriteReg8(pca9634Fd, pwmReg1, emfReg );
-			_motorSpeedReg1[ind] = emfReg;
-		}
+void MotorDriver::PreEnable() {
+	_pwmDriver.Configure(false, PCA9634::OPEN_DRAIN, 0x20);
+	if (_parMode) {
+		// high impedance for ain1, ain2, low state for bin1, bin2
+		_pwmDriver.SetGroupStates(_id, PCA9634::OFF, PCA9634::OFF, PCA9634::ON, PCA9634::ON);
 	} else {
-		motorStateReg |= (0x00 << stateRegShift1) | (0x02 << stateRegShift2); // first drive high state, second pwm
-		if (prevState != motorStateReg) wiringPiI2CWriteReg8(pca9634Fd, stateReg, motorStateReg );
-		if (_motorSpeedReg2[ind] != emfReg) {
-			wiringPiI2CWriteReg8(pca9634Fd, pwmReg2, emfReg );
-			_motorSpeedReg2[ind] = emfReg;
-		}
-	}*/
+		_pwmDriver.SetGroupStates(_id, PCA9634::ON, PCA9634::ON, PCA9634::ON, PCA9634::ON);
+	}
+	//usleep(10);
+}
+
+void MotorDriver::PostEnable() {
+	//usleep(2500);
+	_pwmDriver.Configure(false, PCA9634::TOTEM_POLE, 0x00);
+	usleep(10000);
+	_pwmDriver.SetGroupStates(_id, _inputStates[0], _inputStates[1], _inputStates[2], _inputStates[3]);
+}
+
+int MotorDriver::SetOutputLevel(uint8_t output, int16_t level) {
 	int16_t pw;
 	uint8_t out = (uint8_t)output;
 	if (level >= 0) { // forward
@@ -229,6 +232,9 @@ int MotorDriver::SetOutputLevel(DriverOutput output, int16_t level) {
 		pw = -level;
 		
 		_pwmDriver.SetPulse(_id*4+out*2, pw);
+	}
+	if (_parMode) {
+		_inputStates[0] = _inputStates[1] = PCA9634::ON; 
 	}
 	_pwmDriver.SetGroupStates(_id, _inputStates[0], _inputStates[1], _inputStates[2], _inputStates[3]);
 	return 0;
@@ -259,12 +265,12 @@ int32_t StepperDriver::DriveSteps(int32_t steps, uint32_t periodUs, uint8_t driv
 		}
 		
 		if (steps > 0) {
-			_driver.SetOutputLevel(M1, _step&0x02 ? driveLevel : - driveLevel);
-			_driver.SetOutputLevel(M2, (_step+1)&0x02 ? driveLevel : - driveLevel);
+			_driver.SetOutputLevel(0, _step&0x02 ? driveLevel : - driveLevel);
+			_driver.SetOutputLevel(1, (_step+1)&0x02 ? driveLevel : - driveLevel);
 			_step++;
 		} else {
-			_driver.SetOutputLevel(M1, (_step-1)&0x02 ? driveLevel : - driveLevel);
-			_driver.SetOutputLevel(M2, _step&0x02 ? driveLevel : - driveLevel);
+			_driver.SetOutputLevel(0, (_step-1)&0x02 ? driveLevel : - driveLevel);
+			_driver.SetOutputLevel(1, _step&0x02 ? driveLevel : - driveLevel);
 			_step--;
 		}
 	}
@@ -360,14 +366,21 @@ MagAcc::MagAcc() {
 	_magI2cFd = wiringPiI2CSetup(MAG_ADDR);
 	_accI2cFd = wiringPiI2CSetup(ACC_ADDR);
 	// Setup control registers for reading
-	wiringPiI2CWriteReg8(_accI2cFd, 0x20, 0b00100111); // CTRL_1, enable x y z axis data, 50 hz sampling
+	wiringPiI2CWriteReg8(_accI2cFd, 0x24, 0x40); // reset
+	usleep(200000);
+	wiringPiI2CWriteReg8(_accI2cFd, 0x20, 0b00101111); // CTRL_1, enable x y z axis data, 50 hz sampling
+	wiringPiI2CWriteReg8(_accI2cFd, 0x22, 0/*0b11000010*/); // CTRL_3,  
 	wiringPiI2CWriteReg8(_accI2cFd, 0x23, 0x00); // CTRL_4, set +/- 2g full scale
-	wiringPiI2CWriteReg8(_accI2cFd, 0x24, 0x01); // CTRL_5,  open drain interrupt signal
-	//wiringPiI2CWriteReg8(_i2cFd, 0x24, 0b11100100); // CTRL_5, high resolution mode, thermometer off, 6.25hz ODR
+	wiringPiI2CWriteReg8(_accI2cFd, 0x24, 0x02); // CTRL_5,  open drain active low interrupt signal
+	wiringPiI2CWriteReg8(_accI2cFd, 0x26, 0x00<<2); // CTRL_7, latched interrupt
+	//wiringPiI2CWriteReg8(_accI2cFd, 0x2E, (0x02<<5) | 25); // FIFO_CTRL, Stream mode, 25 treshold
+	//wiringPiI2CWriteReg8(_accI2cFd, 0x30, 0x3F);
+
 	wiringPiI2CWriteReg8(_magI2cFd, 0x21, 0b01100011); // CTRL_2, set +/- 16 gauss full scale, reboot memory, reset mag registers
 	wiringPiI2CWriteReg8(_magI2cFd, 0x20, 0b01011000); // CTRL_2, High-performance mode, 40Hz,
 	wiringPiI2CWriteReg8(_magI2cFd, 0x22, 0x00); // CTRL_3, Continuous-conversion mode
 	wiringPiI2CWriteReg8(_magI2cFd, 0x23, 0x08); // CTRL_4, get magnetometer out of low power mode
+	wiringPiI2CWriteReg8(_magI2cFd, 0x30, 0/*0xE9*/);
 	
 	_accFs = 0;
 	_magFs = 1;
@@ -391,7 +404,7 @@ int MagAcc::SetMagFs(unsigned char fs) {
 	_magFs = fs&0x03;
 	return wiringPiI2CWriteReg8(_magI2cFd, 0x21, _magFs << 5);
 }
-
+/*
 int GetTwosComp(uint8_t msb, uint8_t lsb) {
     int32_t twosComp = msb;
 	twosComp <<= 8;
@@ -400,197 +413,154 @@ int GetTwosComp(uint8_t msb, uint8_t lsb) {
         return twosComp - 65536;
     else
         return twosComp;
+}*/
+
+VectorXYZ MagAcc::ReadAcceleration() {
+	uint8_t buf[6];
+	wiringPiI2CWrite(_accI2cFd, 0x28); 
+	usleep(100);
+	int n = read(_accI2cFd, buf, 6);
+	//int n = i2c_smbus_read_i2c_block_data(_accI2cFd, 0x28, 6, &(buf[0]));
+	//std::cout<<"n: "<<n<<"  "<<(int)buf[1]<<std::endl;
+	VectorXYZ vec;
+	//buf[4] = i2c_smbus_read_byte_data(_accI2cFd, 0x2c);
+	//buf[5] = i2c_smbus_read_byte_data(_accI2cFd, 0x2d);
+	vec.x = (float)GET_S16(buf[0], buf[1]) * _accFsSensMap[_accFs] / 1000;
+	vec.y = (float)GET_S16(buf[2], buf[3]) * _accFsSensMap[_accFs] / 1000;
+	vec.z = (float)GET_S16(buf[4], buf[5]) * _accFsSensMap[_accFs] / 1000;
+	return vec;
 }
 
 float MagAcc::GetMagX(){
-	int mag = GetTwosComp(	wiringPiI2CReadReg8(_magI2cFd, 0x29), // msb byte
-							wiringPiI2CReadReg8(_magI2cFd, 0x28) ); // lsb byte
+	int mag = GET_S16(	wiringPiI2CReadReg8(_magI2cFd, 0x28), // lsb byte
+							wiringPiI2CReadReg8(_magI2cFd, 0x29) ); // msb byte
 	return mag * _magFsSensMap[_magFs] / 1000; // convert to gauss
 }
 
 float MagAcc::GetMagY(){
-	int mag = GetTwosComp(	wiringPiI2CReadReg8(_magI2cFd, 0x2b), // msb byte
-							wiringPiI2CReadReg8(_magI2cFd, 0x2a) ); // lsb byte
+	int mag = GET_S16(	wiringPiI2CReadReg8(_magI2cFd, 0x2a), // lsb byte
+							wiringPiI2CReadReg8(_magI2cFd, 0x2b) ); // msb byte
 	return mag * _magFsSensMap[_magFs] / 1000; // convert to gauss
 }
 
 float MagAcc::GetMagZ(){
-	int mag = GetTwosComp(	wiringPiI2CReadReg8(_magI2cFd, 0x2d), // msb byte
-							wiringPiI2CReadReg8(_magI2cFd, 0x2c) ); // lsb byte
+	int mag = GET_S16(	wiringPiI2CReadReg8(_magI2cFd, 0x2c), // lsb byte
+							wiringPiI2CReadReg8(_magI2cFd, 0x2d) ); // msb byte
 	return mag * _magFsSensMap[_magFs] / 1000; // convert to gauss
 }
 
 float MagAcc::GetAccX() {
-	int acc = GetTwosComp(	wiringPiI2CReadReg8(_accI2cFd, 0x29), // msb byte
-							wiringPiI2CReadReg8(_accI2cFd, 0x28) ); // lsb byte
+	int acc = GET_S16(	wiringPiI2CReadReg8(_accI2cFd, 0x28), // lsb byte
+							wiringPiI2CReadReg8(_accI2cFd, 0x29) ); // msb byte
 	return acc * _accFsSensMap[_accFs] / 1000; // convert to g units
 }
 
 float MagAcc::GetAccY() {
-	int acc = GetTwosComp(	wiringPiI2CReadReg8(_accI2cFd, 0x2b), // msb byte
-							wiringPiI2CReadReg8(_accI2cFd, 0x2a) ); // lsb byte
+	int acc = GET_S16(	wiringPiI2CReadReg8(_accI2cFd, 0x2a), // lsb byte
+							wiringPiI2CReadReg8(_accI2cFd, 0x2b) ); // lsb msb
 	return acc * _accFsSensMap[_accFs] / 1000;
 }
 
 float MagAcc::GetAccZ() {
-	int acc = GetTwosComp(	wiringPiI2CReadReg8(_accI2cFd, 0x2d), // msb byte
-							wiringPiI2CReadReg8(_accI2cFd, 0x2c) ); // lsb byte
+	int acc = GET_S16(	wiringPiI2CReadReg8(_accI2cFd, 0x2c), // lsb byte
+							wiringPiI2CReadReg8(_accI2cFd, 0x2d) ); // msb byte
 	return acc * _accFsSensMap[_accFs] / 1000;
 }
 
 float MagAcc::GetTemp() {
-	return GetTwosComp(	wiringPiI2CReadReg8(_accI2cFd, 0x06),
-						wiringPiI2CReadReg8(_accI2cFd, 0x05) ) / 8;
-}
-
-uint16_t I2cRead16(int fd, int reg) {
-	uint8_t buf[2];
-	wiringPiI2CWrite(fd, reg); 
-	usleep(100);
-	read(fd, buf, 2);
-	int res = buf[0];
-	res <<= 8;
-	res |= buf[1];
-	return res;
-}
-
-int I2cWrite16(int fd, uint8_t reg, uint16_t value) {
-	uint8_t buf[3] = {reg, (uint8_t)(value>>8), (uint8_t)value};
-	return write(fd, buf, 3);
-}
-
-uint32_t I2cRead24(int fd, int reg) {
-	uint8_t buf[3];
-	wiringPiI2CWrite(fd, reg); 
-	usleep(100);
-	read(fd, buf, 3);
-	uint32_t res = buf[0] << 8;
-	res |= buf[1];
-	res <<= 8;
-	res |= buf[2];
-	return res;
+	return (float)GET_S16(	wiringPiI2CReadReg8(_magI2cFd, 0x2E),
+						wiringPiI2CReadReg8(_magI2cFd, 0x2F) ) / 8;
 }
 
 Barometer::Barometer() {
 	_i2cFd = wiringPiI2CSetup(BAR_ADDR);
-	wiringPiI2CWriteReg8(_i2cFd, 0xE0, 0xB6);//wiringPiI2CWrite(_i2cFd, 0x1E); // reset
-	usleep(100000);
-	/*_c1 = I2cRead16(_i2cFd, 0xa2);
-	_c2 = I2cRead16(_i2cFd, 0xa4);
-	_c3 = I2cRead16(_i2cFd, 0xa6);
-	_c4 = I2cRead16(_i2cFd, 0xa8);
-	_c5 = I2cRead16(_i2cFd, 0xaa);
-	_c6 = I2cRead16(_i2cFd, 0xac);*/
-	for (int i = 0; i < 9; i++) 
-		dig_P[i] = I2cRead16(_i2cFd, 0x8E + i*2);
-	for (int i = 0; i < 3; i++) 
-		dig_T[i] = I2cRead16(_i2cFd, 0x88 + i*2);
-	
-	wiringPiI2CWriteReg8(_i2cFd, 0xF4, 0x27); // control
+	wiringPiI2CWriteReg8(_i2cFd, 0xE0, 0xB6);
 	usleep(200000);
-	std::cout << std::dec << "dig_T[0]: " << dig_T[0] << "  dig_T[1]: " << dig_T[1] << std::endl; 
+	dig_T[0] = (uint16_t)wiringPiI2CReadReg16(_i2cFd, 0x88);
+	for (int i = 1; i < 3; i++) 
+		dig_T[i] = (int16_t)wiringPiI2CReadReg16(_i2cFd, 0x88 + i*2);
+	dig_P[0] = (uint16_t)wiringPiI2CReadReg16(_i2cFd, 0x8E);
+	for (int i = 1; i < 9; i++) 
+		dig_P[i] = (int16_t)wiringPiI2CReadReg16(_i2cFd, 0x8E + i*2);
+	dig_H[0] = (uint8_t)wiringPiI2CReadReg8(_i2cFd, 0xA1);
+	dig_H[1] = (int16_t)wiringPiI2CReadReg16(_i2cFd, 0xE1);
+	dig_H[2] = (uint8_t)wiringPiI2CReadReg8(_i2cFd, 0xE3);
+	int16_t e4 = (int8_t)wiringPiI2CReadReg8(_i2cFd, 0xE4);
+	uint8_t e5 = (uint8_t)wiringPiI2CReadReg8(_i2cFd, 0xE5);
+	dig_H[3] = (int16_t)((e4<<4) | (e5 & 0x0F));
+	int16_t e6 = (int8_t)wiringPiI2CReadReg8(_i2cFd, 0xE6);
+	dig_H[4] = (e6<<4) | (e5 >> 4);
+	dig_H[5] = (int8_t)wiringPiI2CReadReg8(_i2cFd, 0xE7);
+	//for (int i = 0; i < 6; i++) std::cout<<"dig_H["+std::to_string(i)+"]: "<<(int)dig_H[i]<<std::endl;
+	wiringPiI2CWriteReg8(_i2cFd, 0xF4, 0x24); // sleep mode
+	wiringPiI2CWriteReg8(_i2cFd, 0xF5, (3 << 5) | (0 << 2));
+	wiringPiI2CWriteReg8(_i2cFd, 0xF2, 1);
+	wiringPiI2CWriteReg8(_i2cFd, 0xF4, (1 << 5) | (1 << 2) | 3);
+	
+	//std::cout << std::dec << "dig_T[0]: " << dig_T[0] << "  dig_T[1]: " << dig_T[1] << std::endl; 
 }
 
 Barometer::~Barometer() {
 	close(_i2cFd);
 }
 
-int32_t Barometer::_Compensate_T_int32(int32_t adc_T)
-{
-	int32_t var1, var2, T;
-	var1 = ((((adc_T>>3) - ((int32_t)dig_T[0]<<1))) * ((int32_t)dig_T[1])) >> 11;
-	var2 = (((((adc_T>>4) - ((int32_t)dig_T[0])) * ((adc_T>>4) - ((int32_t)dig_T[0]))) >> 12) *
-	((int32_t)dig_T[2])) >> 14;
-	t_fine = var1 + var2;
-	T = (t_fine * 5 + 128) >> 8;
-	return T;
+int Barometer::_ReadData() {
+	wiringPiI2CWrite(_i2cFd, 0xF7); 
+	//usleep(100);
+	return read(_i2cFd, _data, 8);
 }
 
 float Barometer::GetTemp(){
-	/*wiringPiI2CWrite(_i2cFd, 0x58); // Convert D2 (OSR=4096)
-	usleep(10000);
-	int val = I2cRead24(_i2cFd, 0x00); // read cmd
-	
-	int64_t dt = val - _c5 * (1L<<8);;
-	float temp = (2000 + (dt * _c6) / (1L<<23));// * 0.012;
-	// Second order temperature compensation 
-	int64_t t2;
-	if(temp >= 2000) {
-		// High temperature 
-		t2 = 5 * (dt * dt) / (1LL<<38);
-	} else {
-		// Low temperature 
-		t2 = 3 * (dt * dt) / (1LL<<33);
-	}
-
-	float temperature = (float)(temp - t2) / 100;
-	*/
-	int val = I2cRead24(_i2cFd, 0xFA) >> 4;
-	/*val = wiringPiI2CReadReg8(_i2cFd, 0xFA);
-	val <<= 8;
-	val |= wiringPiI2CReadReg8(_i2cFd, 0xFB);
-	val <<= 8;
-	val |= wiringPiI2CReadReg8(_i2cFd, 0xFC);
-	val >>= 4;*/
-	int32_t temperature = _Compensate_T_int32(val);
-	//std::cout << std::hex << (int)buf[0] << " ," << (int)buf[1] <<" ," << (int)buf[2] << std::endl; 
-	std::cout << std::dec << "raw temp:" << val <<"  bar temp: " << temperature << std::endl; 
-	
+	float UT = I2cRead24(_i2cFd, 0xFA) >> 4;
+	float var1 = (UT / 16384.0 - float(dig_T[0]) / 1024.0) * float(dig_T[1]);
+	float var2 = ((UT / 131072.0 - float(dig_T[0]) / 8192.0) * 
+		(UT / 131072.0 - float(dig_T[0]) / 8192.0)) * float(dig_T[2]);
+	t_fine = int(var1 + var2);
+	float temperature = (var1 + var2) / 5120.0;
 	return temperature;
 }
 
 float Barometer::GetPressure(){
-	wiringPiI2CWrite(_i2cFd, 0x58); // Convert D2 (OSR=4096)
-	usleep(10000);
-	int val = I2cRead24(_i2cFd, 0x00); // read cmd
-	
-	int64_t dt = val - _c5 * (1L<<8);;
-	float temp = (2000 + (dt * _c6) / (1L<<23));// * 0.012;
-	
-	wiringPiI2CWrite(_i2cFd, 0x48); // Convert D1 (OSR=4096)
-	usleep(10000);
-	int32_t d1 = I2cRead24(_i2cFd, 0x00); // read cmd
+	float adc = I2cRead24(_i2cFd, 0xF7) >> 4;
+	float var1 = t_fine / 2.0 - 64000.0;
+	float var2 = var1 * var1 * dig_P[5] / 32768.0;
+	var2 = var2 + var1 * dig_P[4] * 2.0;
+	var2 = var2 / 4.0 + dig_P[3] * 65536.0;
+	var1 = (dig_P[2] * var1 * var1 / 524288.0 + dig_P[1] * var1) / 524288.0;
+	var1 = (1.0 + var1 / 32768.0) * dig_P[0];
+	if (var1 == 0) return 0;
+	float p = 1048576.0 - adc;
+	p = ((p - var2 / 4096.0) * 6250.0) / var1;
+	var1 = dig_P[8] * p * p / 2147483648.0;
+	var2 = p * dig_P[7] / 32768.0;
+	p = p + (var1 + var2 + dig_P[6]) / 16.0;
+	return p; // pascals
+}
 
-    int64_t off = _c2 * (1LL<<17) + (_c4 * dt) / (1LL<<6);
-    int64_t sens = _c1 * (1LL<<16) + (_c3 * dt) / (1LL<<7);
-
-    /* Second order temperature compensation for pressure */
-    if(temp < 2000) {
-      /* Low temperature */
-      int32_t tx = temp-2000;
-      tx *= tx;
-      int32_t off2 = 61 * tx / (1<<4);
-      int32_t sens2 = 29 * tx / (1<<4);
-      if(temp < -1500) {
-        /* Very low temperature */
-        tx = temp+1500;
-        tx *= tx;
-        off2 += 17 * tx;
-        sens2 += 9 * tx;
-      }
-      off -= off2;
-      sens -= sens2;
-	}
-
-    int32_t p = ((int64_t)d1 * sens/(1LL<<21) - off) / (1LL << 15);
-    float pressure = (float)p / 100;
-	return pressure;
+float Barometer::GetHumidity() {
+	/*_ReadData();
+	uint16_t adc = _data[6];
+	adc <<= 8;
+	adc |= _data[7];*/
+	float adc = I2cRead16(_i2cFd, 0xFD);
+	float h = t_fine - 76800.0;
+	h = (adc - (dig_H[3] * 64.0 + dig_H[4] / 16384.0 * h)) *
+		(dig_H[1] / 65536.0 * (1.0 + dig_H[5] / 67108864.0 * h *
+		(1.0 + dig_H[2] / 67108864.0 * h)));
+	h = h * (1.0 - dig_H[0] * h / 524288.0);
+	if (h > 100)
+		h = 100;
+	else if (h < 0)
+		h = 0;
+	return h;
 }
 
 ADConverter::ADConverter() {
 	_i2cFd = wiringPiI2CSetup(ADC_ADDR);
-	//wiringPiI2CWrite(_i2cFd, 0x01); // set pointer to config register
-	//I2cWrite16(_i2cFd, 0x01, 0x9383);
-	I2cWrite16(_i2cFd, 0x01, 0xE383);
-	uint8_t data[3] = {0x00, 0x00, 0x00};
-	data[0] = 0; data[1] = 0;
-	usleep(2000);
-	wiringPiI2CWrite(_i2cFd, 0x00);
-	read(_i2cFd, data, 2);
-	int val = I2cRead16(_i2cFd, 0x00);
-	float vin = (val>>3); // mV
-	std::cout << std::hex << "adch: " << (int)data[0] << "  adcl: " << (int)data[1] << std::endl; 
-	std::cout << "vin: " << vin << std::endl; 
+	
+	I2cWrite16(_i2cFd, 0x01, 0x6200);
+	I2cWrite16(_i2cFd, 0x02, 1000); // lo tresh
+	I2cWrite16(_i2cFd, 0x03, 1500); // hi tresh
 }
 
 ADConverter::~ADConverter() {
@@ -602,7 +572,7 @@ uint16_t ADConverter::GetRawConversion() {
 }
 
 float ADConverter::ConvertToVolts(AdcInput input, AdcFullScale fullScale) {
-	uint16_t config = 0x8183; // 1600 SPS, start single conversion, disable comparator
+	uint16_t config = 0x8180;//0x8183; // 1600 SPS, start single conversion, disable comparator
 	config |= ((uint16_t)fullScale << 9);
 	config |= ((uint16_t)input << 12);
 	I2cWrite16(_i2cFd, 0x01, config);
@@ -644,47 +614,45 @@ void SonarDriver::_EchoIsrCb(SonarDriver *sonar) {
 
 PiBot::PiBot(bool watchdogMode)
 {
+	_wdMode = watchdogMode;
+	_lowPowerEvent = false;
+	//_faultEvent = false;
+	
 	wiringPiSetupGpio(); // Initialize wiringPi
 	pinMode(22,  OUTPUT); // deactivate enable
 	digitalWrite(22, LOW);
 	usleep(100);
 	pinMode(22,  INPUT);
 	pullUpDnControl(22, PUD_DOWN);
-	
-	_wdMode = watchdogMode;
-	_lowPowerEvent = false;
-	
 	wiringPiISR(22, INT_EDGE_FALLING, _LowPowerCb);
+	
+	pinMode(13,  INPUT);
+	pullUpDnControl(13, PUD_UP);
+	//wiringPiISR(13, INT_EDGE_FALLING, _FaultCb);	
 	
 	pinMode(26,  OUTPUT); // Sonars trigger
 	
 	_mDriver[0] = _mDriver[1] = NULL;
 	_stepDrv[0] = _stepDrv[1] = NULL;
-	//stepper[2][3] = new StepperDriver(*(_mDriver[1]), 2, 3);
-	
-	//encoders.push_back(new Encoder(5));
-	//encoders.push_back(new Encoder(16));
-	
-	//std::cout<<encoders.size()<<std::endl;
 	
 	for (int i = 0; i < 5; i++ ) 
 		_sonars[i] = NULL;
-	
-	//digitalWrite(22, HIGH);//pinMode(22,  INPUT); // enable power
+
 }
 
 PiBot::~PiBot(){
 	Disable();
-	delete _mDriver[0];
-	delete _mDriver[1];
 	delete _stepDrv[0];
 	delete _stepDrv[1];
+	delete _mDriver[0];
+	delete _mDriver[1];
 	for (int i = 0; i < 5; i++ )
 		delete _sonars[i];
 	
 }
 
 bool PiBot::_lowPowerEvent = false;
+//bool PiBot::_faultEvent = false;
 bool PiBot::_wdMode;
 
 void PiBot::_LowPowerCb(void) {
@@ -694,11 +662,35 @@ void PiBot::_LowPowerCb(void) {
 	//PiBot::PowerControl(1);
 }
 
+/*void PiBot::_FaultCb(void) {
+	Disable();
+	_faultEvent = true;
+}*/
+
+bool PiBot::IsFault() {
+	return (digitalRead(13)==0);
+}
+
 void PiBot::Enable() {
-	// discharge cap
+	int inState = digitalRead(22);
+	if (inState==1) {
+		if (!_wdMode) {
+			pinMode(22,  INPUT);
+			pullUpDnControl(22, PUD_UP);
+			_lowPowerEvent = false;
+			return;
+		}
+	} else {
+		if (_mDriver[0] != NULL) _mDriver[0]->PreEnable();
+		if (_mDriver[1] != NULL) _mDriver[1]->PreEnable();
+	}
+	// charge cap
 	pinMode(22,  OUTPUT); 
 	digitalWrite(22, HIGH);
-	usleep(10); 
+	if (inState==0) 
+		usleep(100);
+	else
+		usleep(5);
 	// set to power monitor mode
 	pinMode(22,  INPUT);
 	if (_wdMode) {
@@ -713,6 +705,15 @@ void PiBot::Enable() {
 		_lowPowerEvent = true;
 	} else {
 		_lowPowerEvent = false;
+		if (inState==0 && ((_mDriver[0] != NULL) || (_mDriver[1] != NULL))) 
+			// Necessary delay to precharge power caps for entering parallel mode
+			usleep(10000);
+		if (inState==0 && _mDriver[0] != NULL) {
+			_mDriver[0]->PostEnable();
+		}
+		if (inState==0 && _mDriver[1] != NULL) {
+			_mDriver[1]->PostEnable();
+		}
 	}
 }
 
@@ -724,13 +725,14 @@ void PiBot::Disable() {
 int PiBot::InitMotorDriver(DriverId driverId, bool paralellMode) {
 	if (_mDriver[(uint8_t)driverId] != NULL) 
 		delete _mDriver[(uint8_t)driverId];
-	_mDriver[(uint8_t)driverId] = new MotorDriver(driverId, _pca9634);
+	_mDriver[(uint8_t)driverId] = new MotorDriver(driverId, _pca9634, paralellMode);
 	return 0;
 }
 
 int PiBot::InitStepperDriver(DriverId driverId) {
 	if (_stepDrv[(uint8_t)driverId])
 		delete _stepDrv[(uint8_t)driverId];
+	InitMotorDriver(driverId, false);
 	_stepDrv[(uint8_t)driverId] = new StepperDriver(*(_mDriver[(uint8_t)driverId]));
 	return 0;
 }
@@ -759,15 +761,21 @@ void PiBot::SonarTrigger() {
 
 int PiBot::SetPWM(uint8_t channel, float dutyCircle) {
 	if (channel <= 16) {
-		if (dutyCircle == 1)
-			_pca9685.SetPulse(channel-1, 0xFFFF, 0);
-		else
-			_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
-	} else if (channel <= 20) {
-		if (dutyCircle == 0) {
-			_pca9634.SetState(channel-17+4, PCA9634::ON);
+		int16_t pw = dutyCircle*4096;
+		if (pw >= 4096) {
+			_pca9685.SetPulse(channel-1, 0xFFFF, 1);
+		} else if (pw <= 0) {
+			_pca9685.SetPulse(channel-1, 1, 0xFFFF);
 		} else {
-			_pca9634.SetPulse(channel-17+4, 256-dutyCircle*256);
+			_pca9685.SetPulse(channel-1, 0, dutyCircle*4096);
+		}
+			
+	} else if (channel <= 20) {
+		int16_t pw = 256-dutyCircle*256;
+		if (pw >= 256) {
+			_pca9634.SetState(channel-17+4, PCA9634::ON);
+		} else { 
+			_pca9634.SetPulse(channel-17+4, pw);
 			_pca9634.SetState(channel-17+4, PCA9634::PWM);
 		}
 	}
@@ -779,28 +787,36 @@ int PiBot::SetLedDrive(uint8_t channel, float level) {
 }
 
 int PiBot::SetMotorDrive(DriverOutput output, int16_t level, DeacayMode deacayMode){
-	return _mDriver[output/2]->SetOutputLevel((DriverOutput)(output%2), level);
+	return _mDriver[(uint8_t)output/2]->SetOutputLevel((uint8_t)output%2, level);
 }
 
 int PiBot::SetCurrentDrive(uint8_t channel, float current_mA) {
 	if (channel <= 16)
-		_pca9685.SetPulse(channel-1, 0, current_mA * 4096 * 47 / 5000);
+		SetPWM(channel, current_mA * 47 / 5000);
+		//_pca9685.SetPulse(channel-1, 0, current_mA * 4096 * 47 / 5000);
 }
 
-int PiBot::SetDriverLimit(DriverId driverId, float maxCurrent) {
-	_pca9685.SetPulse(14+(uint8_t)driverId, maxCurrent, 0);
+// Vref = Vd + r2 * (Vpwm - Vd) / (r1+r2) 
+// Vref = 3.3 + 62000 * (dc*5 - 3.3) / 66700 = 4.648 * dc + 0.233
+// dc = (Vref - 0.233) / 4.648 
+int PiBot::SetDriverLimit(DriverId driverId, float choppingCurrent) {
+	float vref = choppingCurrent * 6.6 * 0.22;
+	vref = (vref > 3.3) ? 3.3 : vref;
+	//_pca9685.SetPulse(14+(uint8_t)driverId, 0, ((vref-0.233)/4.648)*4096);
+	SetPWM(15+(uint8_t)driverId, (vref-0.233)/4.648);
 	return 0;
 }
 
 int PiBot::SetServoControl(uint8_t channel, uint16_t pulseWidthUs) {
 	if (channel <= 16) {
-		_pca9685.SetPulse(channel-1, 0, pulseWidthUs*4096/20000);
+		//_pca9685.SetPulse(channel-1, 0, pulseWidthUs*4096/20000);
+		SetPWM(channel, pulseWidthUs/20000);
 	}
 }
 
 float PiBot::GetTemperature(float r25, float beta, float refVoltage) {
 	float vr = adc.ConvertToVolts(AIN1, ADC_FS_4_096V);
-	float r = (refVoltage - vr) / vr * 24900;
+	float r = (refVoltage - vr) / vr * 23700;
 	return 1.0 / (log((double)r/r25)/beta + (double)1.0/298.15) - 273.15;
 	//return (double)beta / log((double)r/(r25*exp(-(double)beta/298.15))) - 273.15;
 }

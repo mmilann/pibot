@@ -154,7 +154,7 @@ int main(int argc, char *argv[]) {
     sigfillset(&sa.sa_mask);
     sigaction(SIGINT,&sa,NULL); 
 	
-	lircFd = LircOpen("/dev/lircd");
+	lircFd = LircOpen((char*)"/dev/lircd");
 	kb_nonblock(true);
 	
 	pinMode(24,  INPUT);
@@ -176,7 +176,7 @@ int main(int argc, char *argv[]) {
 		digitalWrite(17, HIGH);
 	}
 	
-	PiBot::Enable();
+	pibot.Enable();
 
 	while (1) {
 		std::system("clear");
@@ -291,16 +291,18 @@ int main(int argc, char *argv[]) {
 		cout << "Light Level: "<<lightLevel<<endl;
 		cout << "magX: " << magacc.GetMagX()<< " magY: " << magacc.GetMagY()<< " magZ: " << magacc.GetMagZ() << endl;
 		cout << "accX: " << magacc.GetAccX()<< " accY: " << magacc.GetAccY()<< " accZ: " << magacc.GetAccZ() << endl;
-		cout << "pressure: " << bar.GetPressure() << endl;
+		cout << "Barometer temp: " << bar.GetTemp() << " °C, pressure: " << bar.GetPressure()/100 << " [mb], humidity: " << bar.GetHumidity()<<" %"<< endl;
 		cout << "range1 [cm]: " << pibot.SonarDistance(1) << "  range2 [cm]: " << pibot.SonarDistance(2) << "  range3 [cm]: " << pibot.SonarDistance(3) << endl;
 		cout << "drive: "<< (int)driveWheelLeft <<", "<< (int)driveWheelRight<< " target: "<< targetSpeed << ", speed left "<< speedWheelLeft<< ", speed right "<< speedWheelRight << endl;
 		if (pibot.IsPowerLow()) {
 			cout << "Low power: " << endl;
 			break;
 		}
-		
+		if (pibot.IsFault()) {
+			cout << "Fault" << endl;
+		}
 		usleep(50000);
-		PiBot::Enable();
+		//pibot.Enable();
 		
 		if( _quit.load() ) break;    // exit normally after SIGINT
 	}

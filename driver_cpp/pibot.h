@@ -51,12 +51,18 @@ enum DeacayMode {SLOW, FAST};
 enum EncoderChannel { ENC1=0, ENC2 };
 enum AdcInput {AIN_DIFF_01 = 0, AIN_DIFF_03, AIN_DIFF_13, AIN_DIFF_23, AIN0, AIN1, AIN2, AIN3};
 enum AdcFullScale {ADC_FS_6_144V = 0, ADC_FS_4_096V, ADC_FS_2_048V, ADC_FS_1_024V, ADC_FS_0_512V, ADC_FS_0_256V};
-
+class VectorXYZ {
+public:
+	float x;
+	float y;
+	float z;
+};
+	
 class PCA9634
 {
 public:
 	enum outputDriveT { OPEN_DRAIN=0, TOTEM_POLE=4 };
-	enum outputStateT { OFF=0, ON=1, PWM, PWM_GROUP };
+	enum outputStateT { OFF=0, ON=1, PWM, PWM_GROUP, UNKNOWN };
 	PCA9634(int address = PCA9634_ADDR);
 	~PCA9634();
 	int Configure(bool inverted, outputDriveT outDrv, uint8_t outne);
@@ -67,7 +73,7 @@ public:
 private:
 	int _fd;
 	uint8_t _states[2];
-	uint8_t _pw[8];
+	int16_t _pw[8];
 };
 
 class PCA9685
@@ -78,7 +84,7 @@ public:
 	int SetPulse(uint8_t channel, uint16_t timeOn, uint16_t timeOff);
 private:
 	int _fd;
-	uint16_t _tOn, _tOff;
+	int16_t _tOn[16], _tOff[16];
 };
 
 class MotorDriver
@@ -86,10 +92,13 @@ class MotorDriver
 public:
 	MotorDriver(int id, PCA9634 &pwmDriver, bool paralellMode = false);
 	~MotorDriver();
-	int SetOutputLevel(DriverOutput output, int16_t level);
+	int SetOutputLevel(uint8_t output, int16_t level);
+	void PreEnable();
+	void PostEnable();
 private:
 	int _id;
 	PCA9634 &_pwmDriver;
+	bool _parMode;
 	PCA9634::outputStateT _inputStates[4];
 	/*unsigned char _motorStateRegs[2];
 	unsigned char _motorSpeedReg1[2];
@@ -138,6 +147,7 @@ public:
 	~MagAcc();
 	int SetAccFs(unsigned char fs);
 	int SetMagFs(unsigned char fs);
+	VectorXYZ ReadAcceleration();
 	float GetMagX();
 	float GetMagY();
 	float GetMagZ();
@@ -160,14 +170,16 @@ public:
 	Barometer();
 	~Barometer();
 	float GetTemp();
-	float GetPressure();
+	float GetPressure(); // Reads pressure in Pascals
+	float GetHumidity();// Reads relative humidity
 private:
-	int32_t _Compensate_T_int32(int32_t adc_T);
+	int _ReadData();
 	int _i2cFd;
-	int _c1, _c2, _c3, _c4, _c5, _c6;
-	int dig_T[3];
-	int dig_P[10];
-	int32_t t_fine;
+	int _data[8];
+	float dig_T[3];
+	float dig_P[10];
+	float dig_H[6];
+	float t_fine;
 };
 
 class ADConverter
@@ -202,14 +214,15 @@ public:
 	~PiBot();
 	int InitMotorDriver(DriverId driverId, bool paralellMode = false);
 	int SetMotorDrive(DriverOutput output, int16_t level, DeacayMode deacayMode = SLOW);
-	int SetDriverLimit(DriverId driverId, float maxCurrent); // Sets maximum driver chopping current
+	int SetDriverLimit(DriverId driverId, float choppingCurrent); // Sets maximum driver chopping current
 	int InitStepperDriver(DriverId driverId);
 	StepperDriver& Stepper(DriverId driverId);
 	int InitSonar(uint8_t channel);
 	float SonarDistance(uint8_t channel);
-	static void Enable();
+	/*static*/ void Enable();
 	static void Disable();
 	bool IsPowerLow() {return _lowPowerEvent;}
+	bool IsFault();
 	//int32_t DriveSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
 	//int32_t DriveHalfSteps(uint8_t coil1, uint8_t coil2, int32_t steps, uint32_t periodUs, uint8_t torque = 255);
 	int SetPWM(uint8_t channel, float dutyCircle);
@@ -222,13 +235,16 @@ public:
 	ADConverter adc;
 private:
 	static void _LowPowerCb(void);
-
-	PCA9685 _pca9685;
+	static void _FaultCb(void);
+	
 	PCA9634 _pca9634;
+	PCA9685 _pca9685;
+	
 	MotorDriver *_mDriver[2];
 	StepperDriver *_stepDrv[2];
 	SonarDriver *_sonars[5];
 	static bool _lowPowerEvent;
+	//static bool _faultEvent;
 	static bool _wdMode;
 };
 
